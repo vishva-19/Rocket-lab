@@ -95,12 +95,16 @@ describe('Rock belt', () => {
     return { moved: sim.state.x - x0, vx: sim.state.vx, theta: sim.state.theta - theta0 };
   }
 
-  it('A / D slide the rocket sideways in the belt without leaning it, and it stops when let go', () => {
+  it('A / D slide the rocket sideways in the belt, and the slide stops when let go', () => {
     const quick = slide(false, 1);
     expect(quick.moved).toBeGreaterThan(4); // a rock's width in about a second
-    expect(Math.abs(quick.theta)).toBeLessThan(0.01);
     const stopped = slide(false, 1, 1.5);
     expect(Math.abs(stopped.vx)).toBeLessThan(0.5);
+  });
+
+  it('A / D also turn the rocket in the belt once its RCS is open (above the air only RCS can turn it)', () => {
+    expect(Math.abs(slide(true, 1).theta)).toBeGreaterThan(0.05);
+    expect(Math.abs(slide(false, 1).theta)).toBeLessThan(0.01);
   });
 
   it('each open RCS makes the dodge quicker', () => {

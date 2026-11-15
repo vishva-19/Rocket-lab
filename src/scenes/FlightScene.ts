@@ -72,12 +72,14 @@ interface GuideCheckpoint {
 }
 
 const GAME_SPEED = CONFIG.gameSpeed;
-/** Flight School at the Moon: time runs this much slower while the pilot brakes into orbit. */
 const GAME_OVER_STING_MS = 2300;
 const ACHIEVEMENT_GAP_MS = 600;
+/** Flight School at the Moon: time runs this much slower while the pilot brakes into orbit. */
 const GUIDE_MOON_SLOW = 0.5;
 /** How fast Mission Control's autopilot turns the nose (rad per real second). */
 const GUIDE_TURN_RATE = 2;
+/** Flight School tops the cold gas back up once it falls to this (kg). */
+const GUIDE_COLD_GAS_REFILL_KG = 20;
 const wrapAngle = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 const COUNTDOWN_SECONDS = 3;
 /** How long a low fuel type keeps the buzzer going. */
@@ -733,8 +735,8 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
   }
 
   private currentInput(_t: FlightTelemetry): ControlInput {
-    // While Mission Control's autopilot holds the nose at the Moon, A / D do nothing (and burn no cold gas).
-    return { throttle: this.throttle, steer: this.moonAssist ? 0 : this.steerKey() };
+    // Mission Control's autopilot at the Moon only holds the nose while A / D are left alone: they always turn the rocket.
+    return { throttle: this.throttle, steer: this.steerKey() };
   }
 
   // ---------------------------------------------------------------------------
@@ -751,9 +753,12 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
       // The rock belt eases time down a little; the phases fast-forward quiet orbits.
       this.timeScale = this.runner.timeScale(this.sim) * this.challenges.timeScale * (this.moonAssist ? GUIDE_MOON_SLOW : 1);
       const gameDt = dt * GAME_SPEED * this.timeScale;
-      if (this.moonAssist) this.holdNoseBackwards(dt);
+      if (this.moonAssist && this.steerKey() === 0) this.holdNoseBackwards(dt);
       this.sim.advance(gameDt, this.currentInput(t));
-      if (this.guided) this.refillHealth();
+      if (this.guided) {
+        this.refillHealth();
+        this.refillColdGas();
+      }
 
       if (this.runner.satellite) stepRover(this.runner.satellite, this.newSatelliteLost ? gameDt * CONFIG.network.collision.fallTimeScale : gameDt);
       this.stepNetwork(gameDt);
@@ -1173,6 +1178,15 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     playSfx(this, 'UI_CLICK');
   }
 
+  /** Flight School: the steering thrusters never run dry, so A / D always turn the rocket in space. */
+  private refillColdGas(): void {
+    if (this.sim.phase !== 'FLYING' || this.sim.vehicle.rcsCount === 0 || this.sim.coldGas > GUIDE_COLD_GAS_REFILL_KG) return;
+    if (this.sim.refillColdGas() <= 0) return;
+    const p = this.world.rocketScreen(this.sim);
+    this.fx.popup(p.x, p.y - 90, 'COLD GAS REFILLED', UI.greenText, 22);
+    playSfx(this, 'UI_CLICK');
+  }
+
   private updateHud(t: FlightTelemetry, dt: number): void {
     const now = this.time.now;
     const flying = this.sim.phase === 'FLYING' && !this.result && !this.runner.over;
@@ -1348,7 +1362,7 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     if (r.problem) return PROBLEM_INFO[r.problem.id].howTo;
     if (mode === 'ASCENT') {
       if (t.earthAltitude > ROCK_BELT.bottom - 300 && t.earthAltitude < ROCK_BELT.top)
-        return `ROCK BELT: A / D slide sideways${this.sim.rcsReady ? ' (RCS boost)' : ''}  ·  W speed through the gaps  ·  near misses build a combo`;
+        return `ROCK BELT: A / D turn and slide sideways${this.sim.rcsReady ? ' (RCS boost)' : ''}  ·  W speed through the gaps  ·  near misses build a combo`;
       if (this.coastApex !== null && this.coastApex >= SOI_ALTITUDE && t.thrust > 0) return 'You’ll coast to the Moon now: X cuts the engines to save fuel';
       if (this.coastApex !== null && this.coastApex >= SOI_ALTITUDE) return 'Coasting to the Moon: save fuel for the orbit burn';
       if (t.fuelFraction <= 0) return 'Out of fuel: coasting';

@@ -9,7 +9,7 @@ const CFG = CONFIG.rockBelt;
 /**
  * The rock belt, part of the normal flight: no lanes, no prompt. Rocks drift across the rocket's
  * path, red chevrons at the top edge show what is coming, and time slows a little inside.
- * Burn (W) to slip through a gap sooner, or slide sideways with A / D (faster with each open RCS).
+ * Burn (W) to slip through a gap sooner, or turn and slide sideways with A / D (the slide is faster with each open RCS).
  * A small rock chips the health; a boulder knocks off the part it hits.
  */
 export class RockBeltChallenge extends Challenge {
@@ -49,7 +49,7 @@ export class RockBeltChallenge extends Challenge {
 
     if (inBelt && !this.inside && !this.done) {
       this.inside = true;
-      this.emit({ kind: 'START', id: this.id, message: 'ROCK BELT! Red arrows show rocks coming: burn (W) through the gaps, slide sideways with A / D', height: y });
+      this.emit({ kind: 'START', id: this.id, message: 'ROCK BELT! Red arrows show rocks coming: burn (W) through the gaps, turn and slide sideways with A / D', height: y });
     }
     if (this.inside && y >= CFG.top) {
       this.inside = false;

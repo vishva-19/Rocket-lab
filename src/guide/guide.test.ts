@@ -201,6 +201,22 @@ describe('free health refill', () => {
   });
 });
 
+describe('free cold gas refill', () => {
+  it('fills the cold gas back to the top and leaves the booster fuel alone', () => {
+    const tree = new RocketTree(ROOT_CELL.x, ROOT_CELL.y);
+    tree.setPayload('SATELLITE');
+    REFERENCE_ROCKET.forEach(p => tree.attachPart(p.x, p.y, p.type, p.fuel));
+    const sim = new FlightSim(buildFlightVehicle(tree.getTelemetry().tree));
+    const full = sim.coldGas;
+    expect(full).toBeGreaterThan(0);
+    expect(sim.refillColdGas()).toBe(0);
+    for (const id of sim.tanks.keys()) sim.tanks.set(id, 0);
+    expect(sim.refillColdGas()).toBeCloseTo(full);
+    expect(sim.coldGas).toBeCloseTo(full);
+    expect(sim.boosterFuel).toBe(0);
+  });
+});
+
 describe('script', () => {
   it('keeps Mission Control short: two sentences at most', () => {
     const lines = [...LAB_TOUR.map(s => s.line), ...BUILD_STEPS.map(s => s.line), ...Object.values(MOMENTS).map(m => m.line)];

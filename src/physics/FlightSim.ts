@@ -176,8 +176,8 @@ export class FlightSim {
   /** Extra wind on top of the normal profile (m/s, + = east), e.g. a wind-shear gust; air only. */
   public gust = 0;
   /**
-   * A straight sideways push set each frame by a challenge (the rock belt), or null: A / D slide the
-   * rocket left / right at up to `maxSpeed` without leaning, and it stops sliding as soon as you let go.
+   * A straight sideways push set each frame by a challenge (the rock belt), or null: on top of turning
+   * the rocket as usual, A / D slide it left / right at up to `maxSpeed`, and the slide stops as soon as you let go.
    */
   public dodge: { accel: number; maxSpeed: number } | null = null;
   /** The sideways speed the dodge push has added on top of the flight (m/s, + = east). */
@@ -277,6 +277,18 @@ export class FlightSim {
     if (missing <= 0) return 0;
     this.stats.healthRestored += missing;
     return missing;
+  }
+
+  /** Fill every cold-gas tank still on the rocket back to the top for free (Flight School); returns the kg added. */
+  public refillColdGas(): number {
+    let added = 0;
+    for (const [id, kg] of this.tanks) {
+      const part = this.vehicle.parts.find(p => p.id === id);
+      if (!part || isBoosterFuel(part.fuelKind) || kg >= part.fuelCapacity) continue;
+      added += part.fuelCapacity - kg;
+      this.tanks.set(id, part.fuelCapacity);
+    }
+    return added;
   }
 
   /** Knock health off without losing a part (stress, radiation, a blown bolt). */
@@ -509,8 +521,8 @@ export class FlightSim {
         rcsTorque +
         thrust * Math.sin(ENGINE.gimbalRange) * gimbalArm +
         FINS.controlAuthority * v.finCount * qA * v.length * 0.5;
-    // In the rock belt A / D slide the rocket sideways instead of leaning it (applyDodge).
-    const controlTorque = this.dodge ? 0 : steer * steerAuthority;
+    // In the rock belt A / D still turn the rocket, and slide it sideways too (applyDodge).
+    const controlTorque = steer * steerAuthority;
     // Small side thrusters push the way you steer (diminished by aerodynamic dynamic pressure in thick air).
     const rcsAeroAtten = Math.max(0.25, 1 - q / 2000);
     const rcs = inSpace
