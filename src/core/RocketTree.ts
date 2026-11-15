@@ -339,7 +339,7 @@ export class RocketTree {
     const liftoffThrust = boosterFuelMass > 0 ? (totalThrust * fuelThrustSum) / boosterFuelMass : 0;
     const heavy = missing === '' && liftoffThrust <= totalMass + totalFuelMass;
     const valid = missing === '' && fuelTankCount >= 1 && !heavy;
-    const reason = heavy ? 'TOO HEAVY TO LIFT OFF: ADD ENGINES OR DROP FUEL' : missing;
+    const reason = heavy ? 'TOO HEAVY: ADD ENGINES' : missing;
 
     return {
       valid,
