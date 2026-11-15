@@ -51,7 +51,7 @@ export const OUTCOME_PAYOUT: Record<MissionOutcome, number> = {
   IN_ORBIT: ECON.phaseRewards.ORBIT,
   SATELLITE_DEPLOYED: ECON.phaseRewards.ORBIT + ECON.phaseRewards.DEPLOY,
   ROVER_DEPLOYED: ECON.phaseRewards.ORBIT + ECON.phaseRewards.ROVER,
-  CREW_LANDED: ECON.phaseRewards.ORBIT + ECON.phaseRewards.ROVER + ECON.phaseRewards.LANDING
+  CREW_LANDED: ECON.phaseRewards.ORBIT + ECON.phaseRewards.LANDING
 };
 
 export function outcomeFor(stats: FlightStats, phasesDone: number, payload?: PayloadKind): MissionOutcome {

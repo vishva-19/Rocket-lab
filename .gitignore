@@ -5,4 +5,5 @@ dist
 *.zip
 temp_main_menu/
 
+social/out/
 .firebase/

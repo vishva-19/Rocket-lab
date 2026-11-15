@@ -1,0 +1,186 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Rocket Lab social card</title>
+<style>
+  @font-face { font-family: "Press Start 2P"; src: url(fonts/e3t4euO8T-267oIAQAu6jDQyK0nS.ttf); }
+  html, body { margin: 0; background: #04050d; }
+  canvas { display: block; width: 1200px; height: 630px; }
+</style>
+<canvas id="c" width="1200" height="630"></canvas>
+<script>
+// Deterministic: window.renderFrame(t) draws one frame; t in [0,1) is one seamless loop of LOOP_S seconds.
+const W = 1200, H = 630, LOOP_S = 7;
+const ctx = document.getElementById('c').getContext('2d');
+const img = {};
+const PARTS = ['tip', 'cockpit', 'fuel_purple', 'thrust', 'left_wing', 'right_wing', 'earth'];
+const SHEETS = { crew: 48, rover: 64, satellite: 48 };
+// animation rows, from the sprite sheets' json files: [row, frames, ms per frame, loops]
+const ANIM = {
+  crew: { exit: [0, 10, 110, false], plant: [1, 8, 140, false], wave_flag: [2, 6, 150, true] },
+  rover: { fall: [0, 1, 800, false], land: [1, 7, 130, false], deploy: [2, 10, 130, false], drive: [3, 8, 110, true] },
+  satellite: { deploy: [0, 10, 110, false], working: [1, 8, 130, true] },
+};
+
+function rng(seed) { let s = seed; return () => (s = (s * 16807) % 2147483647) / 2147483647; }
+const r = rng(11);
+const stars = Array.from({ length: 130 }, () => ({
+  x: Math.floor(r() * (W / 4)) * 4, y: Math.floor(r() * (500 / 4)) * 4,
+  phase: Math.floor(r() * 4), big: r() < 0.1,
+}));
+const craters = Array.from({ length: 9 }, () => ({ x: r() * W, y: 540 + r() * 80, w: 40 + r() * 90 }));
+const rocks = Array.from({ length: 14 }, () => ({ x: r() * W, y: 520 + r() * 100, s: 1 + Math.floor(r() * 3) }));
+
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const ease = (p) => 1 - Math.pow(1 - clamp(p), 2.5);
+
+// draw one frame of an animated sheet; (x, bottom) is the cell's bottom-centre
+function anim(sheet, name, elapsed, x, bottom, scale) {
+  const [row, frames, ms, loop] = ANIM[sheet][name];
+  let f = Math.floor((elapsed * 1000) / ms);
+  f = loop ? f % frames : Math.min(f, frames - 1);
+  const c = SHEETS[sheet], s = c * scale;
+  ctx.drawImage(img[sheet], f * c, row * c, c, c, Math.round(x - s / 2), Math.round(bottom - s), s, s);
+}
+function part(name, x, y, scale = 2) { ctx.drawImage(img[name], Math.round(x), Math.round(y), 48 * scale, 48 * scale); }
+
+function drawSky(ts) {
+  const bands = ['#04050d', '#070a1c', '#0b1030', '#10143c', '#16164a', '#1c1852'];
+  bands.forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(0, (500 / bands.length) * i, W, 500 / bands.length + 1); });
+  for (const s of stars) {
+    ctx.globalAlpha = (Math.floor(ts * 2 + s.phase) % 4) === 0 ? 0.35 : 0.9;
+    ctx.fillStyle = s.big ? '#bfe3ff' : '#ffffff';
+    ctx.fillRect(s.x, s.y, s.big ? 8 : 4, s.big ? 8 : 4);
+    if (s.big) ctx.fillRect(s.x - 4, s.y + 2, 16, 4);
+  }
+  ctx.globalAlpha = 1;
+  ctx.drawImage(img.earth, 1040, 28, 128, 128); // Earth hanging in the Moon's sky
+}
+
+function drawGround() {
+  // far hills
+  ctx.fillStyle = '#3a3c52';
+  const pts = [0, 470, 120, 450, 260, 478, 420, 460, 640, 482, 820, 456, 980, 476, 1200, 458];
+  ctx.beginPath(); ctx.moveTo(0, 520);
+  for (let i = 0; i < pts.length; i += 2) ctx.lineTo(pts[i], Math.round(pts[i + 1] / 4) * 4);
+  ctx.lineTo(1200, 520); ctx.fill();
+  // regolith in stepped bands (lit at the horizon, darker toward the viewer)
+  const g = ['#a5a9b4', '#989ca8', '#8b8f9c', '#7e8290', '#727684'];
+  g.forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(0, 500 + i * 26, W, 27); });
+  for (let i = 1; i < g.length; i++) { // dither seams between bands
+    ctx.fillStyle = g[i - 1];
+    for (let x = 0; x < W; x += 8) ctx.fillRect(x + (i % 2) * 4, 500 + i * 26 - 4, 4, 4);
+  }
+  for (const c of craters) { // craters: dark floor, bright rim
+    const w = Math.round(c.w / 4) * 4, h = Math.round(w / 6 / 4) * 4;
+    ctx.fillStyle = '#5d6170'; ctx.fillRect(Math.round(c.x / 4) * 4, Math.round(c.y / 4) * 4, w, h);
+    ctx.fillStyle = '#b9bdc8'; ctx.fillRect(Math.round(c.x / 4) * 4, Math.round(c.y / 4) * 4 - 4, w, 4);
+    ctx.fillStyle = '#4b4f5d'; ctx.fillRect(Math.round(c.x / 4) * 4 + 8, Math.round(c.y / 4) * 4 + h - 4, w - 16, 4);
+  }
+  for (const k of rocks) {
+    const s = k.s * 8, x = Math.round(k.x / 4) * 4, y = Math.round(k.y / 4) * 4;
+    ctx.fillStyle = '#5b5f6e'; ctx.fillRect(x, y, s, Math.round(s * 0.6 / 4) * 4);
+    ctx.fillStyle = '#c1c5cf'; ctx.fillRect(x, y, s, 4);
+  }
+}
+
+function drawDust(ts, cx, gy) {
+  // puffs thrown out sideways when the rocket touches down
+  const t0 = 1.45, dur = 1.4;
+  if (ts < t0 || ts > t0 + dur) return;
+  for (let i = 0; i < 14; i++) {
+    const k = (ts - t0) / dur, dir = i % 2 ? 1 : -1, v = 70 + (i * 37) % 110;
+    ctx.globalAlpha = ctx.__a * (1 - k) * 0.8;
+    ctx.fillStyle = i % 3 ? '#cfd2da' : '#9a9eab';
+    const sz = 8 + Math.round(k * 3) * 4;
+    ctx.fillRect(Math.round((cx + dir * (30 + v * k * 2.2)) / 4) * 4, Math.round((gy - 6 - (i % 3) * 5 - Math.sin(k * 3.14) * 28) / 4) * 4, sz, sz);
+  }
+  ctx.globalAlpha = ctx.__a;
+}
+
+function drawRocket(ts, cx, gy) {
+  const P = 96, rows = 5, fadeAll = ctx.globalAlpha;
+  const p = clamp((ts - 0.2) / 1.6), e = ease(p);
+  const off = -(1 - e) * 640;
+  const top = gy - rows * P + off;
+  const engY = top + 4 * P;
+  if (p > 0 && p < 1) { // landing burn, fades as speed bleeds off
+    const len = 30 + (1 - p) * 120;
+    {
+      const f = len + Math.round(Math.sin(ts * 70) * 2) * 4, fx = cx + 32;
+      ctx.fillStyle = '#ff6a1a'; ctx.fillRect(fx, engY + P - 6, 32, f);
+      ctx.fillStyle = '#ffd23a'; ctx.fillRect(fx + 8, engY + P - 6, 16, f * 0.65);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(fx + 12, engY + P - 6, 8, f * 0.3);
+    }
+    ctx.globalAlpha = fadeAll * 0.25 * (1 - p); ctx.fillStyle = '#ffd27a'; // ground glow
+    ctx.fillRect(cx - 90, gy - 4, 276, 8); ctx.globalAlpha = fadeAll;
+  }
+  const fade = ctx.globalAlpha; // shadow once down
+  ctx.globalAlpha = fade * 0.35 * e; ctx.fillStyle = '#2a2c38'; ctx.fillRect(cx - 100, gy - 6, 296, 12);
+  ctx.globalAlpha = fade;
+  part('tip', cx, top);
+  part('cockpit', cx, top + P);
+  part('fuel_purple', cx, top + 2 * P);
+  part('fuel_purple', cx, top + 3 * P);
+  part('thrust', cx, top + 4 * P);
+  part('left_wing', cx - P, top + 3 * P); // fins one block up, on the lower hydrogen tank
+  part('right_wing', cx + P, top + 3 * P);
+}
+
+function drawActors(ts) {
+  const rocketX = 880, rocketGround = 548;
+  drawRocket(ts, rocketX, rocketGround);
+  drawDust(ts, rocketX + 48, rocketGround);
+
+  // satellite: unfolds in the sky, then keeps signalling
+  if (ts >= 1.0) {
+    const el = ts - 1.0, bob = Math.round(Math.sin(ts * 2.2) * 2) * 2;
+    if (el < 1.1) anim('satellite', 'deploy', el, 640, 250 + bob, 4);
+    else anim('satellite', 'working', el - 1.1, 640, 250 + bob, 4);
+  }
+  // rover: airbag ball falls, lands, unfolds, then drives toward the flag
+  if (ts >= 2.0 && ts < 2.6) {
+    const k = (ts - 2.0) / 0.6; anim('rover', 'fall', 0, 300, 90 + k * k * 500, 5);
+  } else if (ts >= 2.6 && ts < 3.5) anim('rover', 'land', ts - 2.6, 300, 598, 5);
+  else if (ts >= 3.5 && ts < 4.8) anim('rover', 'deploy', ts - 3.5, 300, 598, 5);
+  else if (ts >= 4.8) anim('rover', 'drive', ts - 4.8, 300 + (ts - 4.8) * 70, 598, 5);
+  // astronaut: steps out beside the rocket's base, plants the flag, waves
+  const ax = 610, ab = 600;
+  if (ts >= 2.4 && ts < 3.5) anim('crew', 'exit', ts - 2.4, ax, ab, 6);
+  else if (ts >= 3.5 && ts < 4.62) anim('crew', 'plant', ts - 3.5, ax, ab, 6);
+  else if (ts >= 4.62) anim('crew', 'wave_flag', ts - 4.62, ax, ab, 6);
+}
+
+function drawText(ts) {
+  ctx.textBaseline = 'top';
+  ctx.font = '64px "Press Start 2P"';
+  ['ROCKET', 'LAB'].forEach((w, i) => {
+    ctx.fillStyle = '#c8321e'; ctx.fillText(w, 66, 62 + i * 88);
+    ctx.fillStyle = '#ffffff'; ctx.fillText(w, 60, 56 + i * 88);
+  });
+  const x = 60, y = 252;
+  ctx.fillStyle = 'rgba(4,5,13,0.72)'; ctx.fillRect(x - 16, y - 14, 400, 150);
+  ctx.strokeStyle = '#ffd23a'; ctx.lineWidth = 4; ctx.strokeRect(x - 16, y - 14, 400, 150);
+  ctx.font = '20px "Press Start 2P"';
+  [['DESIGN IT.', '#ffd23a'], ['LAUNCH IT.', '#ff7a45'], ['REACH THE MOON.', '#7fd4ff']].forEach(([s, c], i) => {
+    ctx.fillStyle = c; ctx.fillText(s, x + 8, y + 12 + i * 40);
+  });
+  if (Math.floor(ts * 2) % 2 === 0) { ctx.fillStyle = '#ffffff'; ctx.fillText('▶ PLAY NOW', 60, 424); }
+}
+
+window.renderFrame = (t) => {
+  const ts = t * LOOP_S;
+  ctx.imageSmoothingEnabled = false;
+  drawSky(ts);
+  drawGround();
+  // everything on stage fades out and back in so the loop has no visible jump
+  const a = Math.min(1, ts / 0.25, (LOOP_S - ts) / 0.4);
+  ctx.save(); ctx.globalAlpha = ctx.__a = clamp(a); drawActors(ts); ctx.restore();
+  drawText(ts);
+};
+
+Promise.all([
+  ...PARTS.map(n => new Promise((res, rej) => { img[n] = new Image(); img[n].onload = res; img[n].onerror = rej; img[n].src = `../public/assets/${n}.png`; })),
+  ...Object.keys(SHEETS).map(n => new Promise((res, rej) => { img[n] = new Image(); img[n].onload = res; img[n].onerror = rej; img[n].src = `../public/assets/sprites/${n}.png`; })),
+  document.fonts.load('24px "Press Start 2P"'),
+]).then(() => { window.renderFrame(0.8); window.ready = true; });
+</script>

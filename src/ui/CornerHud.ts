@@ -699,6 +699,9 @@ export class HeightLadder {
   private readonly gfx: Phaser.GameObjects.Graphics;
   private readonly value: Phaser.GameObjects.Text;
   private readonly bestText: Phaser.GameObjects.Text;
+  private readonly cutText: Phaser.GameObjects.Text;
+  /** Where the rocket would peak if the engines were cut now; `enough` = that reaches the Moon's pull. Null = hidden. */
+  private coast: { apex: number; enough: boolean } | null = null;
   private readonly markTexts: Phaser.GameObjects.Text[] = [];
   private readonly bandTexts: Phaser.GameObjects.Text[] = [];
   private readonly container: Phaser.GameObjects.Container;
@@ -756,7 +759,8 @@ export class HeightLadder {
     this.gfx = scene.add.graphics();
     this.value = scene.add.text(0, 0, '', body(20)).setOrigin(1, 0.5);
     this.bestText = scene.add.text(0, 0, 'BEST', title(6, PX.text.gold)).setOrigin(0, 0.5);
-    items.push(this.gfx, this.value, this.bestText);
+    this.cutText = scene.add.text(this.x - 16, this.bottom + 15, 'CUT NOW', body(15, UI.greenText)).setOrigin(1, 0.5).setVisible(false);
+    items.push(this.gfx, this.value, this.bestText, this.cutText);
     this.container = scene.add.container(0, 0, items).setDepth(20);
   }
 
@@ -782,10 +786,32 @@ export class HeightLadder {
     this.container.add([notch, mark]);
   }
 
+  /** The coast prediction: engines on and `enough` means cutting them now still reaches the Moon. Null hides it. */
+  public setCoast(coast: { apex: number; enough: boolean } | null): void {
+    this.coast = coast;
+  }
+
   public update(height: number, best: number, glitch = false): void {
     const g = this.gfx;
     g.clear();
     const y = Math.round(this.toY(height));
+    this.cutText.setVisible(!!this.coast?.enough);
+    if (this.coast) {
+      const c = this.coast;
+      const slow = 0.6 + 0.4 * Math.sin(this.scene.time.now / 330);
+      if (c.enough) {
+        // Green glow along the tube and a pulsing CUT NOW: coasting from here reaches the Moon.
+        g.fillStyle(UI.green, 0.35 * slow);
+        g.fillRect(this.x - 9, this.top - 2, 18, this.bottom - this.top + 4);
+        this.cutText.setAlpha(0.6 + 0.4 * slow);
+      } else if (c.apex > height) {
+        // Short of the Moon: an amber tick where you would peak if you cut now.
+        const ay = Math.round(this.toY(c.apex));
+        g.fillStyle(UI.gold, 0.9);
+        for (let yy = ay; yy < y; yy += 6) g.fillRect(this.x - 1, yy, 2, 3);
+        g.fillRect(this.x - 10, ay, 20, 2);
+      }
+    }
     // Climbed so far: a glossy column of light.
     g.fillStyle(UI.sky, 1);
     g.fillRect(this.x - 5, y, 10, this.bottom - y);

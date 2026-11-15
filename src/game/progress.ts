@@ -32,11 +32,11 @@ const fresh = (): PlayerProgress => ({ money: STARTING_MONEY, bestHeight: 0, com
 
 /** Cash for in-flight awards. */
 const AWARD_CASH: Partial<Record<Award['id'], number>> = {
-  NEAR_MISS: 2,
-  PICKUP_FUEL: 1,
-  MILESTONE: 5,
-  STAGE: 3,
-  BULLSEYE: 25
+  NEAR_MISS: 0,
+  PICKUP_FUEL: 0,
+  MILESTONE: 8,
+  STAGE: 0,
+  BULLSEYE: 40
 };
 
 function defaultStorage(): ProgressStorage | null {
@@ -79,7 +79,7 @@ export function cashFromAwards(awards: readonly Award[]): number {
   let cash = 0;
   for (const a of awards) {
     if (a.id === 'MISSION') continue; // mission rewards are paid separately
-    cash += AWARD_CASH[a.id] ?? Math.floor(a.points / 100);
+    cash += AWARD_CASH[a.id] ?? Math.round(Math.floor(a.points / 100) / 1.25);
   }
   return cash;
 }

@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { GAME_ASSETS, preloadGameAssets } from '../core/assets';
 import { playSfx } from '../core/sound';
+import { NASA_CREDITS, OTHER_CREDITS } from '../game/nasaInfo';
 import { loadProgress, saveProgress, STARTING_MONEY } from '../game/progress';
 import { PX, drawPixelPanel, pixelBody, pixelTitle } from '../ui/pixel';
 import { paintLabSky } from '../ui/labSky';
@@ -339,6 +340,9 @@ export class MenuScene extends Phaser.Scene {
       rows.push({ y, link: e.resumable ? y + SUB_H + 4 : null });
       y += SUB_H + (e.resumable ? LINK_H + 4 : 0) + SUB_GAP;
     }
+    // NASA SOURCES: the third entry, a page of the real NASA material the game is built on.
+    const nasaY = y;
+    y += SUB_H + SUB_GAP;
     const bottom = y - SUB_GAP;
 
     const c = this.add.container(0, 0);
@@ -356,6 +360,9 @@ export class MenuScene extends Phaser.Scene {
       c.add(this.subButton(e.label, e.resumable ? 'RESUME' : '', x, row.y, w, e.id === 'GAME', () => this.startGuide(e.id, false)));
       if (row.link !== null) c.add(this.startOverLink(x + 16, row.link, () => this.startGuide(e.id, true)));
     });
+    branch.fillRect(bx, nasaY + SUB_H / 2 - 1, x - bx - 4, 3);
+    branch.fillRect(bx, entry.bottom + 3, 3, nasaY + SUB_H / 2 - entry.bottom + 2);
+    c.add(this.subButton('NASA SOURCES', '', x, nasaY, w, false, () => this.showNasa()));
     this.menuList.add(c);
     this.school = c;
 
@@ -466,6 +473,23 @@ export class MenuScene extends Phaser.Scene {
     this.labStart = { guide: id, restart };
     this.hideSchool();
     this.play();
+  }
+
+  /** What real NASA material the game is built on, and what we took from each. */
+  private showNasa(): void {
+    this.hideSchool();
+    this.openPanel('NASA SOURCES', 600, p => {
+      p.add(pixelBody(this, 18, 48, 'BUILT ON REAL NASA MISSION DESIGN.', 22, PX.text.cream));
+      NASA_CREDITS.forEach((c, i) => {
+        const y = 84 + i * 50;
+        p.add(pixelBody(this, 18, y, c.name.toUpperCase(), 24, PX.text.gold));
+        p.add(pixelBody(this, 18, y + 22, c.took, 20, PX.text.white));
+      });
+      const oy = 84 + NASA_CREDITS.length * 50 + 6;
+      p.add(pixelTitle(this, 18, oy, 'ALSO USED', 8, PX.text.muted));
+      p.add(pixelBody(this, 18, oy + 18, OTHER_CREDITS.map(c => c.name).join('  ·  '), 20, PX.text.white));
+      return oy + 40;
+    });
   }
 
   private showOptions(): void {

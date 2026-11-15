@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { HierarchicalRocketNode, PayloadKind } from '../core/types';
 import { currentMission, Mission, MissionContext, newlyCompleted, rocketCost } from '../game/missions';
+import { missionReport, realMissionFor } from '../game/nasaInfo';
 import {
   ActiveProblem,
   RoverCapsule,
@@ -210,6 +211,7 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
   private bannerTimer = 0;
   private wobbleWarnedAt = -Infinity;
   private coastApex: number | null = null;
+  private cutWasEnough = false;
   private apexAt = -Infinity;
   private lastVersion = 0;
   private repairPressed = false;
@@ -268,6 +270,7 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     this.moonAssist = false;
     this.throttle = 1;
     this.countdown = null;
+    this.cutWasEnough = false;
     this.launched = false;
     this.exploded = false;
     this.lowFuelSince = new Map();
@@ -1190,6 +1193,12 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     const slidIn = this.sideSlide > 0.01;
     this.ladder.setVisible(ascent && !this.result && slidIn);
     const glitch = this.challenges.glitch;
+    // Engines on during the climb: show where cutting now would peak, and flag when that is already enough.
+    const coasting = this.coastApex !== null && ascent && t.thrust > 0 && !this.result;
+    const enough = coasting && (this.coastApex ?? 0) >= SOI_ALTITUDE;
+    this.ladder.setCoast(coasting ? { apex: this.coastApex ?? 0, enough } : null);
+    if (enough && !this.cutWasEnough) playSfx(this, 'UI_CLICK');
+    this.cutWasEnough = enough;
     this.ladder.update(Math.max(0, t.earthAltitude), best, glitch);
     this.networkPanel?.update(
       this.network.map(n => n.asset),
@@ -1610,10 +1619,14 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
   }
 
   private showResultPanel(result: MissionResult): void {
-    const w = 460;
+    const w = 520;
+    // Two stacked cards: the original end screen on top, the NASA mission report under it.
+    const real = realMissionFor(this.runner.payload ?? 'CREW', this.runner.complete);
     const h = 330;
+    const reportH = real ? 190 : 126;
+    const gap = 10;
     const x = (1280 - w) / 2;
-    const y = (720 - h) / 2 + 10;
+    const y = (720 - (h + gap + reportH)) / 2;
     const cx = x + w / 2;
     const accent: Record<MissionResult['outcome'], number> = {
       CREW_LANDED: PX.gold,
@@ -1746,6 +1759,46 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     );
     items.push(...this.makeButton(cx + 108, y + h - 52, 'B', 'BUILDER', false, () => this.returnToBuilder()));
     if (this.canRetryPhase) items.push(pixelBody(this, cx, y + h - 8, 'Retry is free', 16, PX.text.muted).setOrigin(0.5, 1));
+    // NASA mission report: the flight in the four segments of a real mission, then (if you got there) a real mission like it.
+    const ry0 = y + h + gap;
+    const rg = this.add.graphics();
+    hudFrame(rg, x, ry0, w, reportH, tone, 0.68);
+    items.push(rg);
+    const reportY = ry0 + 12;
+    items.push(pixelTitle(this, x + 18, reportY, 'MISSION REPORT', 10, PX.text.accent).setOrigin(0, 0));
+    const segments = missionReport({
+      cost: this.cost,
+      maxAltitude: this.sim.stats.maxAltitude,
+      payload: this.runner.payload ?? 'CREW',
+      objectiveDone: this.runner.complete,
+      problemsSolved: this.runner.solved + this.challenges.handled,
+      problemsFailed: this.runner.failedProblems + this.challenges.failed,
+      earned: e.total + this.phasePaid
+    });
+    const segW = 118;
+    segments.forEach((seg, i) => {
+      const sx = cx - (4 * segW + 3 * 8) / 2 + i * (segW + 8);
+      const sy = reportY + 24;
+      rg.fillStyle(0x07060b, 0.75);
+      rg.fillRect(sx, sy, segW, 78);
+      rg.fillStyle(0x000000, 0.4);
+      rg.fillRect(sx, sy, segW, 2);
+      rg.fillStyle(tone, 0.6);
+      rg.fillRect(sx, sy + 76, segW, 2);
+      items.push(pixelTitle(this, sx + segW / 2, sy + 8, seg.label, 8, PX.text.muted).setOrigin(0.5, 0));
+      const val = pixelBody(this, sx + segW / 2, sy + 22, seg.value, 30, PX.text.white).setOrigin(0.5, 0);
+      if (val.width > segW - 8) val.setScale((segW - 8) / val.width);
+      items.push(val);
+      const cap = pixelBody(this, sx + segW / 2, sy + 54, seg.caption, 19, PX.text.muted).setOrigin(0.5, 0);
+      if (cap.width > segW - 6) cap.setScale((segW - 6) / cap.width);
+      items.push(cap);
+    });
+    if (real) {
+      const ry = reportY + 124;
+      items.push(pixelTitle(this, cx, ry, `LIKE NASA'S ${real.name}`, 10, PX.text.gold).setOrigin(0.5, 0));
+      items.push(pixelBody(this, cx, ry + 24, real.because, 24, PX.text.cream).setOrigin(0.5, 0).setAlign('center').setWordWrapWidth(w - 40));
+    }
+
     this.resultPanel = this.add.container(0, 0, items).setAlpha(0).setDepth(100);
     this.tweens.add({ targets: this.resultPanel, alpha: 1, duration: 350 });
   }

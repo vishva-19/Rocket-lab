@@ -26,6 +26,16 @@ describe('Challenge runner', () => {
     expect(r.timeScale).toBeCloseTo(CONFIG.rockBelt.slowMotion);
   });
 
+  it('counts challenges that ended well or badly, for the mission report', () => {
+    const sim = flyingSim();
+    const r = createChallenges(() => 0.99);
+    expect(r.handled + r.failed).toBe(0);
+    // Cross the radiation belt top to bottom: it starts, then ends once the rocket is past it.
+    r.update(frame(sim, { earthAltitude: (C.radiationBelt.from + C.radiationBelt.to) / 2 }));
+    r.update(frame(sim, { earthAltitude: C.radiationBelt.to + 100 }));
+    expect(r.handled + r.failed).toBe(1);
+  });
+
   it('each challenge has its own switch', () => {
     C.maxQ.enabled = false;
     expect(createChallenges().modules.map(m => m.id)).not.toContain('MAX_Q');

@@ -1,0 +1,63 @@
+// app/layout.tsx (Next.js App Router)
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'My Web App',
+  description: 'Rocket Lab – Design It. Launch It. Reach the Moon., an interactive pixel-art educational game that simulates the complete journey of designing, launching, and operating a lunar mission.',
+  metadataBase: new URL('https://rocket-lab-1903.web.app'),
+  alternates: {
+    canonical: '/',
+  },
+  icons: {
+    icon: [
+      { url: '/favicon.ico' },
+      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
+      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/favicon-48x48.png', sizes: '48x48', type: 'image/png' },
+      { url: '/favicon-96x96.png', sizes: '96x96', type: 'image/png' },
+      { url: '/favicon-128.png', sizes: '128x128', type: 'image/png' },
+      { url: '/favicon-196x196.png', sizes: '196x196', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+      { url: '/apple-touch-icon-152x152.png', sizes: '152x152', type: 'image/png' },
+      { url: '/apple-touch-icon-144x144.png', sizes: '144x144', type: 'image/png' },
+      { url: '/apple-touch-icon-120x120.png', sizes: '120x120', type: 'image/png' },
+      { url: '/apple-touch-icon-114x114.png', sizes: '114x114', type: 'image/png' },
+      { url: '/apple-touch-icon-76x76.png', sizes: '76x76', type: 'image/png' },
+      { url: '/apple-touch-icon-72x72.png', sizes: '72x72', type: 'image/png' },
+      { url: '/apple-touch-icon-60x60.png', sizes: '60x60', type: 'image/png' },
+      { url: '/apple-touch-icon-57x57.png', sizes: '57x57', type: 'image/png' },
+    ],
+    other: [
+      {
+        rel: 'mask-icon',
+        url: '/safari-pinned-tab.svg',
+        color: '#9a9996',
+      },
+    ],
+  },
+  manifest: '/site.webmanifest',
+  openGraph: {
+    title: 'My Web App',
+    description: 'Rocket Lab – Design It. Launch It. Reach the Moon., an interactive pixel-art educational game that simulates the complete journey of designing, launching, and operating a lunar mission.',
+    url: 'https://rocket-lab-1903.web.app',
+    siteName: 'My Web App',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'My Web App',
+        type: 'image/png',
+      },
+    ],
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'My Web App',
+    description: 'Rocket Lab – Design It. Launch It. Reach the Moon., an interactive pixel-art educational game that simulates the complete journey of designing, launching, and operating a lunar mission.',
+    images: ['/twitter-image.png'],
+  },
+};
