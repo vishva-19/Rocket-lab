@@ -184,6 +184,7 @@
       "MOON_SOI": 70
     },
     "padBonus": 100,
+    "guideBonus": 200,
     "recoveryRefund": 0.5
   },
   "hazards": {

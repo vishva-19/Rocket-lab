@@ -4,6 +4,9 @@ import { playSfx } from '../core/sound';
 import { loadProgress, saveProgress, STARTING_MONEY } from '../game/progress';
 import { PX, drawPixelPanel, pixelBody, pixelTitle } from '../ui/pixel';
 import { paintLabSky } from '../ui/labSky';
+import { freshGuide, GuideId, loadGuide, saveGuide, shouldOfferGuide } from '../guide/guideProgress';
+import { setVoiceOn, voiceOn } from '../guide/speech';
+import type { LabGuideStart } from '../guide/LabGuide';
 
 /**
  * Main menu. It paints the exact same dusk sky as the Rocket Lab (ui/labSky.ts) and stands the
@@ -37,6 +40,17 @@ interface Puff {
 const STEAM = ['#fff1de', '#e8d8e4', '#bda8c8', '#8a7898'];
 const SPARK = ['#fff6d0', '#ffd15a', '#ff8a3c', '#c44a3a'];
 
+/** FLIGHT SCHOOL's place in the menu list; its guides open right under it. */
+const SCHOOL_INDEX = 2;
+/** How long the pointer rests on FLIGHT SCHOOL before the guides open (ms). */
+const SCHOOL_HOVER_MS = 220;
+/** The guide buttons: indent from the menu's left edge, height and gap (px). */
+const SUB_INDENT = 28;
+const SUB_H = 44;
+const SUB_GAP = 8;
+/** The "or START OVER" link under a half-finished guide. */
+const LINK_H = 26;
+
 type MenuState = 'idle' | 'prep' | 'rise';
 
 export class MenuScene extends Phaser.Scene {
@@ -63,6 +77,16 @@ export class MenuScene extends Phaser.Scene {
   private power = 0;
   private ventTimer = 0;
   private handedOff = false;
+  /** What the lab should do once it opens: run a Flight School guide or ask the first-play question. */
+  private labStart: LabGuideStart = {};
+  /** FLIGHT SCHOOL's two guides, opened inside the menu right under it (hover or click). */
+  private school?: Phaser.GameObjects.Container;
+  /** OPTIONS and EXIT: they slide down to make room for the guides. */
+  private menuTail!: Phaser.GameObjects.Container;
+  /** Where the pointer may go without folding the guides away: FLIGHT SCHOOL, its guides and the entries below. */
+  private schoolArea = new Phaser.Geom.Rectangle();
+  /** Hovering FLIGHT SCHOOL opens it after a short pause, so sweeping past it on the way down doesn't. */
+  private schoolHover?: Phaser.Time.TimerEvent;
 
   constructor() {
     super('MenuScene');
@@ -95,6 +119,8 @@ export class MenuScene extends Phaser.Scene {
     this.power = 0;
     this.handedOff = false;
     this.puffs = [];
+    this.labStart = {};
+    this.school = undefined;
 
     const sky = this.add.graphics();
     paintLabSky(this, sky);
@@ -113,7 +139,14 @@ export class MenuScene extends Phaser.Scene {
     this.sound.mute = readOptions().mute;
     this.input.keyboard?.on('keyup-ENTER', () => this.startFromKeyboard());
     this.input.keyboard?.on('keyup-SPACE', () => this.startFromKeyboard());
-    this.input.keyboard?.on('keyup-ESC', () => this.closePanel());
+    this.input.keyboard?.on('keyup-ESC', () => {
+      this.closePanel();
+      this.hideSchool();
+    });
+    // The guide buttons fold away once the pointer leaves FLIGHT SCHOOL and the buttons.
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (this.school && !this.schoolArea.contains(p.x, p.y)) this.hideSchool();
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -131,18 +164,20 @@ export class MenuScene extends Phaser.Scene {
 
     // The five entries every main menu here has: CONTINUE, NEW GAME, FLIGHT SCHOOL, OPTIONS, EXIT.
     this.menuList = this.add.container(0, 0);
-    const items: Array<{ label: string; key?: string; main?: boolean; disabled?: boolean; action: () => void }> = [
+    const items: Array<{ label: string; key?: string; main?: boolean; disabled?: boolean; action: () => void; hover?: () => void }> = [
       { label: 'CONTINUE', key: this.hasSave ? 'ENTER' : '', main: this.hasSave, disabled: !this.hasSave, action: () => this.play() },
       { label: 'NEW GAME', key: this.hasSave ? '' : 'ENTER', main: !this.hasSave, action: () => this.newGame() },
-      { label: 'FLIGHT SCHOOL', action: () => this.showSchool() },
+      { label: 'FLIGHT SCHOOL', action: () => this.showSchool(), hover: () => this.hoverSchool() },
       { label: 'OPTIONS', action: () => this.showOptions() },
       { label: 'EXIT', action: () => this.showExit() }
     ];
+    this.menuTail = this.add.container(0, 0);
     items.forEach((it, i) => {
-      const b = this.makeButton(it.label, it.key ?? '', 44, 190 + i * 64, !!it.main, !!it.disabled, it.action);
+      const b = this.makeButton(it.label, it.key ?? '', 44, 190 + i * 64, !!it.main, !!it.disabled, it.action, undefined, undefined, it.hover);
       if (it.label === 'NEW GAME') this.newGameText = b.text;
-      this.menuList.add(b.container);
+      (i > SCHOOL_INDEX ? this.menuTail : this.menuList).add(b.container);
     });
+    this.menuList.add(this.menuTail);
     this.ui.add(this.menuList);
 
     const hint = pixelBody(this, W / 2, H - 52, this.hasSave ? 'PRESS ENTER TO CONTINUE' : 'PRESS ENTER TO START', 22, PX.text.muted).setOrigin(0.5, 0);
@@ -159,7 +194,8 @@ export class MenuScene extends Phaser.Scene {
     disabled: boolean,
     onClick: () => void,
     w = 290,
-    h = 52
+    h = 52,
+    onHover?: () => void
   ): { container: Phaser.GameObjects.Container; text: Phaser.GameObjects.Text } {
     const c = this.add.container(x, y);
     const g = this.add.graphics();
@@ -185,6 +221,7 @@ export class MenuScene extends Phaser.Scene {
       if (this.state !== 'idle' || disabled) return;
       draw(true);
       text.setColor(PX.text.gold);
+      onHover?.();
       // Sweeping the pointer over several buttons must not stack hover sounds.
       if (this.time.now - this.lastHover > 90) {
         this.lastHover = this.time.now;
@@ -239,6 +276,8 @@ export class MenuScene extends Phaser.Scene {
     }
     if (this.hasSave) {
       saveProgress({ money: STARTING_MONEY, bestHeight: 0, completedMissions: [], flights: 0, unlockedFuels: [], assets: [] });
+      // A new save gets a new Flight School too (and the first-play question again).
+      saveGuide(freshGuide());
     }
     this.play();
   }
@@ -267,26 +306,166 @@ export class MenuScene extends Phaser.Scene {
     this.menuList.setVisible(true);
   }
 
-  private showSchool(): void {
-    const rows: Array<[string, string]> = [
-      ['1-5', 'PICK PART'],
-      ['C', 'COCKPIT'],
-      ['CLICK', 'PLACE'],
-      ['R-CLICK', 'REMOVE'],
-      ['ENTER', 'LAUNCH'],
-      ['W', 'THROTTLE'],
-      ['A / D', 'STEER'],
-      ['B', 'SEPARATE SHELLS'],
-      ['SPACE', 'DEPLOY PAYLOAD']
-    ];
-    this.openPanel('FLIGHT SCHOOL', 340, p => {
-      p.add(pixelBody(this, 18, 48, 'BUILD, LAUNCH, REACH ORBIT.', 22, PX.text.cream));
-      rows.forEach(([k, v], i) => {
-        p.add(pixelBody(this, 18, 84 + i * 28, k, 24, PX.text.gold));
-        p.add(pixelBody(this, 322, 84 + i * 28, v, 24, PX.text.white).setOrigin(1, 0));
-      });
-      return 40 + rows.length * 28;
+  // ---- Flight School: two guides that open inside the menu, under the entry (src/guide) ----
+
+  /** Hovering FLIGHT SCHOOL: open after a short pause if the pointer is still on it. */
+  private hoverSchool(): void {
+    this.schoolHover?.remove();
+    this.schoolHover = this.time.delayedCall(SCHOOL_HOVER_MS, () => {
+      const p = this.input.activePointer;
+      if (this.schoolEntry().contains(p.x, p.y)) this.showSchool();
     });
+  }
+
+  private schoolEntry(): Phaser.Geom.Rectangle {
+    return new Phaser.Geom.Rectangle(44, 190 + SCHOOL_INDEX * 64, 290, 52);
+  }
+
+  private showSchool(): void {
+    if (this.school || this.state !== 'idle' || this.subPanel) return;
+    const guide = loadGuide();
+    const entry = this.schoolEntry();
+    const x = entry.x + SUB_INDENT;
+    const w = entry.width - SUB_INDENT;
+    const top = entry.bottom + 12;
+    const entries: Array<{ id: GuideId; label: string; resumable: boolean }> = [
+      { id: 'LAB', label: 'ROCKET LAB GUIDE', resumable: guide.lab.step > 0 && !guide.lab.done },
+      { id: 'GAME', label: 'GAME GUIDE', resumable: guide.game.step > 0 && !guide.game.done }
+    ];
+    // Each guide is a button; a half-finished one has a small "or START OVER" link right under it.
+    const rows: Array<{ y: number; link: number | null }> = [];
+    let y = top;
+    for (const e of entries) {
+      rows.push({ y, link: e.resumable ? y + SUB_H + 4 : null });
+      y += SUB_H + (e.resumable ? LINK_H + 4 : 0) + SUB_GAP;
+    }
+    const bottom = y - SUB_GAP;
+
+    const c = this.add.container(0, 0);
+    // A thin branch from FLIGHT SCHOOL down to each guide, so they read as its sub-menu.
+    const branch = this.add.graphics();
+    branch.fillStyle(PX.accent, 0.8);
+    const bx = entry.x + 12;
+    const lastMid = rows[rows.length - 1].y + SUB_H / 2;
+    branch.fillRect(bx, entry.bottom + 3, 3, lastMid - entry.bottom - 3 + 2);
+    c.add(branch);
+
+    entries.forEach((e, i) => {
+      const row = rows[i];
+      branch.fillRect(bx, row.y + SUB_H / 2 - 1, x - bx - 4, 3);
+      c.add(this.subButton(e.label, e.resumable ? 'RESUME' : '', x, row.y, w, e.id === 'GAME', () => this.startGuide(e.id, false)));
+      if (row.link !== null) c.add(this.startOverLink(x + 16, row.link, () => this.startGuide(e.id, true)));
+    });
+    this.menuList.add(c);
+    this.school = c;
+
+    // OPTIONS and EXIT slide down to make room; the guides fade in.
+    this.tweens.killTweensOf(this.menuTail);
+    this.tweens.add({ targets: this.menuTail, y: bottom - top + 12, duration: 140, ease: 'Quad.easeOut' });
+    c.setAlpha(0);
+    this.tweens.add({ targets: c, alpha: 1, duration: 140, delay: 40 });
+    // Open while the pointer stays on FLIGHT SCHOOL, its guides, or the entries below (which moved down):
+    // closing under the pointer would slide OPTIONS / EXIT away from it.
+    const tailBottom = 190 + 4 * 64 + 52 + (bottom - top + 12);
+    this.schoolArea.setTo(entry.x - 14, entry.y - 6, entry.width + 20, tailBottom - entry.y + 10);
+  }
+
+  /** "or START OVER": a small dark tab under a half-finished guide (readable over any scenery), gold on hover. */
+  private startOverLink(x: number, y: number, onClick: () => void): Phaser.GameObjects.Container {
+    const c = this.add.container(x, y);
+    const or = pixelBody(this, 10, LINK_H / 2, 'or', 20, PX.text.muted).setOrigin(0, 0.5);
+    const text = pixelBody(this, or.x + or.width + 8, LINK_H / 2, 'START OVER', 20, PX.text.white).setOrigin(0, 0.5);
+    const w = text.x + text.width + 10;
+    const g = this.add.graphics();
+    const draw = (hover: boolean) => {
+      g.clear();
+      drawPixelPanel(g, 0, 0, w, LINK_H, { fill: PX.panel, border: hover ? PX.accent : PX.border });
+    };
+    draw(false);
+    const hit = this.add.rectangle(0, 0, w, LINK_H, 0x000000, 0.001).setOrigin(0, 0).setInteractive({ useHandCursor: true });
+    c.add([g, or, text, hit]);
+    hit.on('pointerover', () => {
+      if (this.state !== 'idle') return;
+      draw(true);
+      text.setColor(PX.text.gold);
+      if (this.time.now - this.lastHover > 90) {
+        this.lastHover = this.time.now;
+        playSfx(this, 'UI_HOVER');
+      }
+    });
+    hit.on('pointerout', () => {
+      draw(false);
+      text.setColor(PX.text.white);
+    });
+    hit.on('pointerup', () => {
+      if (this.state !== 'idle') return;
+      playSfx(this, 'UI_CLICK');
+      onClick();
+    });
+    return c;
+  }
+
+  /** A guide button under FLIGHT SCHOOL: shorter and indented, with a small tag (RESUME) on the right. */
+  private subButton(label: string, tag: string, x: number, y: number, w: number, main: boolean, onClick: () => void): Phaser.GameObjects.Container {
+    const h = SUB_H;
+    const c = this.add.container(x, y);
+    const g = this.add.graphics();
+    const idle = main ? PX.text.accent : PX.text.white;
+    const draw = (hover: boolean) => {
+      g.clear();
+      drawPixelPanel(g, 0, 0, w, h, { fill: main ? 0x3a1a12 : PX.panel, border: hover || main ? PX.accent : PX.border });
+    };
+    draw(false);
+    const text = pixelTitle(this, 14, h / 2 - 5, label, 11, idle);
+    c.add([g, text]);
+    if (tag) c.add(pixelBody(this, w - 12, h / 2, tag, 18, PX.text.muted).setOrigin(1, 0.5));
+    const hit = this.add.rectangle(w / 2, h / 2, w, h, 0x000000, 0.001).setInteractive({ useHandCursor: true });
+    c.add(hit);
+    let down = false;
+    hit.on('pointerover', () => {
+      if (this.state !== 'idle') return;
+      draw(true);
+      text.setColor(PX.text.gold);
+      if (this.time.now - this.lastHover > 90) {
+        this.lastHover = this.time.now;
+        playSfx(this, 'UI_HOVER');
+      }
+    });
+    hit.on('pointerout', () => {
+      down = false;
+      c.y = y;
+      draw(false);
+      text.setColor(idle);
+    });
+    hit.on('pointerdown', () => {
+      if (this.state !== 'idle') return;
+      down = true;
+      c.y = y + 2;
+      playSfx(this, 'UI_CLICK');
+    });
+    hit.on('pointerup', () => {
+      c.y = y;
+      if (!down || this.state !== 'idle') return;
+      down = false;
+      onClick();
+    });
+    return c;
+  }
+
+  private hideSchool(): void {
+    this.schoolHover?.remove();
+    this.schoolHover = undefined;
+    if (!this.school) return;
+    this.school.destroy();
+    this.school = undefined;
+    this.tweens.killTweensOf(this.menuTail);
+    this.tweens.add({ targets: this.menuTail, y: 0, duration: 120, ease: 'Quad.easeOut' });
+  }
+
+  private startGuide(id: GuideId, restart: boolean): void {
+    this.labStart = { guide: id, restart };
+    this.hideSchool();
+    this.play();
   }
 
   private showOptions(): void {
@@ -309,11 +488,12 @@ export class MenuScene extends Phaser.Scene {
         options.mute = this.sound.mute;
         writeOptions(options);
       });
-      toggle(1, 'FULLSCREEN', () => (this.scale.isFullscreen ? 'ON' : 'OFF'), () => {
+      toggle(1, 'FLIGHT SCHOOL VOICE', () => (voiceOn() ? 'ON' : 'OFF'), () => setVoiceOn(!voiceOn()));
+      toggle(2, 'FULLSCREEN', () => (this.scale.isFullscreen ? 'ON' : 'OFF'), () => {
         if (this.scale.isFullscreen) this.scale.stopFullscreen();
         else this.scale.startFullscreen();
       });
-      return 90;
+      return 134;
     });
   }
 
@@ -333,6 +513,8 @@ export class MenuScene extends Phaser.Scene {
 
   private play(): void {
     if (this.state !== 'idle') return;
+    if (!this.labStart.guide) this.labStart = { offer: shouldOfferGuide(loadGuide(), loadProgress()) };
+    this.hideSchool();
     this.state = 'prep';
     this.stateTime = 0;
     this.closePanel();
@@ -360,7 +542,7 @@ export class MenuScene extends Phaser.Scene {
     if (this.handedOff) return;
     this.handedOff = true;
     // The lab starts underneath (same sky) and fades in; it stops this scene when it is fully visible.
-    this.scene.launch('BuilderScene', { fromMenu: true });
+    this.scene.launch('BuilderScene', { fromMenu: true, ...this.labStart });
     this.tweens.add({ targets: this.siteImg, alpha: 0, duration: 900, ease: 'Sine.easeIn' });
   }
 

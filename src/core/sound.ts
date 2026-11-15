@@ -18,7 +18,13 @@ export const SFX = {
   ROCKET_FLYING: { key: 'sfx_rocket_flying', path: 'assets/sound/rocket_flying.wav', volume: 0.85 },
   /** Lift-off: plays once the countdown hits GO!. */
   ROCKET_LAUNCH: { key: 'sfx_rocket_launch', path: 'assets/sound/rocket_launch.wav', volume: 1 },
-  ROCKET_SEPARATION: { key: 'sfx_rocket_separation', path: 'assets/sound/rocket_separation.wav', volume: 0.6 }
+  ROCKET_SEPARATION: { key: 'sfx_rocket_separation', path: 'assets/sound/rocket_separation.wav', volume: 0.6 },
+  /** Something went right: a phase finished, a challenge beaten, an award earned. */
+  ACHIEVEMENT: { key: 'sfx_achievement', path: 'assets/sound/achievement.wav', volume: 0.6 },
+  /** Mission Control's text typing out: one typewriter key (made from scratch: filtered noise plus a low thump). */
+  TYPE_KEY: { key: 'sfx_type_key', path: 'assets/sound/typewriter_key.wav', volume: 0.3 },
+  /** The little carriage bell when Mission Control's line has finished typing. */
+  TYPE_BELL: { key: 'sfx_type_bell', path: 'assets/sound/typewriter_bell.wav', volume: 0.12 }
 } as const;
 
 export type SfxName = keyof typeof SFX;
@@ -30,11 +36,14 @@ export function preloadSounds(scene: Phaser.Scene): void {
   }
 }
 
-/** Fire-and-forget one-shot. Silently does nothing when audio isn't available (tests, blocked autoplay). */
-export function playSfx(scene: Phaser.Scene, name: SfxName, volume = 1): void {
+/**
+ * Fire-and-forget one-shot. Silently does nothing when audio isn't available (tests, blocked autoplay).
+ * `detune` shifts the pitch in cents, so a sound repeated quickly doesn't sound mechanical.
+ */
+export function playSfx(scene: Phaser.Scene, name: SfxName, volume = 1, detune = 0): void {
   const s = SFX[name];
   if (!scene.cache?.audio?.exists(s.key)) return;
-  scene.sound?.play?.(s.key, { volume: s.volume * volume });
+  scene.sound?.play?.(s.key, { volume: s.volume * volume, detune });
 }
 
 /** A looping sound that is either on or off (e.g. the warning buzzer while a warning lasts). */

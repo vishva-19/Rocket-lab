@@ -71,6 +71,8 @@ export interface FlightStats {
   partsLost: number;
   /** Health lost to stress, radiation and the like (parts lost count separately). */
   damageTaken: number;
+  /** Health given back for free (Flight School refills it when it runs out). */
+  healthRestored: number;
   bounces: number;
   fuelCollected: number;
   deltaVSpent: number;
@@ -199,6 +201,7 @@ export class FlightSim {
     stagesDropped: 0,
     partsLost: 0,
     damageTaken: 0,
+    healthRestored: 0,
     bounces: 0,
     fuelCollected: 0,
     deltaVSpent: 0
@@ -261,7 +264,19 @@ export class FlightSim {
 
   /** Hull integrity, FULL_HULL at launch: every part lost costs a share, and at 0 the flight is lost. */
   public get hull(): number {
-    return Math.max(0, FULL_HULL - this.stats.partsLost * CONFIG.hull.perPart - this.stats.damageTaken);
+    return Math.max(0, Math.min(FULL_HULL, this.rawHull()));
+  }
+
+  private rawHull(): number {
+    return FULL_HULL - this.stats.partsLost * CONFIG.hull.perPart - this.stats.damageTaken + this.stats.healthRestored;
+  }
+
+  /** Back to full health for free (Flight School); returns the points given back. */
+  public restoreHull(): number {
+    const missing = FULL_HULL - this.rawHull();
+    if (missing <= 0) return 0;
+    this.stats.healthRestored += missing;
+    return missing;
   }
 
   /** Knock health off without losing a part (stress, radiation, a blown bolt). */

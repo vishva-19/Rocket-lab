@@ -12,6 +12,9 @@ import { playSfx } from '../core/sound';
 import { paintLabSky } from '../ui/labSky';
 import { labPauseItems } from '../game/pauseRules';
 import type { PauseSceneData } from './PauseScene';
+import { LabGuide, LabGuideStart, LabHost, PICTURE } from '../guide/LabGuide';
+import { Rect, rect } from '../guide/geometry';
+import { LabTarget } from '../guide/script';
 
 interface PaletteBay {
   type: PartType;
@@ -151,9 +154,15 @@ export class BuilderScene extends Phaser.Scene {
 
   /** True when the player arrived from the main menu, which fades into this scene. */
   private fromMenu = false;
+  /** Flight School (src/guide): the guide to run here, or the first-play question to ask. */
+  private guideStart: LabGuideStart = {};
+  private labGuide: LabGuide | null = null;
+  /** A fan of cards the guide opened: it stays open while the pointer is elsewhere. */
+  private pinnedFlyout: VariantPart | null = null;
 
-  init(data?: { fromMenu?: boolean }): void {
+  init(data?: { fromMenu?: boolean } & LabGuideStart): void {
     this.fromMenu = !!data?.fromMenu;
+    this.guideStart = { guide: data?.guide, restart: data?.restart, offer: data?.offer };
   }
 
   preload(): void {
@@ -208,6 +217,114 @@ export class BuilderScene extends Phaser.Scene {
     });
 
     if (this.fromMenu) this.playMenuIntro();
+    this.labGuide = null;
+    this.pinnedFlyout = null;
+    if (this.guideStart.guide || this.guideStart.offer) {
+      const guide = new LabGuide(this.guideHost());
+      this.labGuide = guide;
+      // Let the lab fade in from the menu first.
+      this.time.delayedCall(this.fromMenu ? 900 : 100, () => guide.start(this.guideStart));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Flight School hooks (src/guide/LabGuide.ts): where things are and a few safe actions
+  // ---------------------------------------------------------------------------
+
+  private guideHost(): LabHost {
+    return {
+      scene: this,
+      guideRect: target => this.guideRect(target),
+      cellRect: (x, y) => this.cellRect(x, y),
+      placedParts: () =>
+        this.rocketTree
+          .getAllNodes()
+          .filter(n => n.id !== this.rocketTree.getRootNode().id)
+          .map(n => ({ gridX: n.gridX, gridY: n.gridY, type: n.type, fuelKind: n.fuelKind })),
+      selection: () => {
+        const type = this.selectedPartType ? this.placedType(this.selectedPartType) : null;
+        return { type, fuel: type === 'FUEL_TANK' ? (this.partKinds.FUEL_TANK as FuelKind) : undefined };
+      },
+      openFlyout: type => {
+        this.pinnedFlyout = type;
+        if (type) this.showFlyout(type);
+        else this.hideFlyout();
+      },
+      buildInstantly: parts => {
+        for (const p of parts) this.rocketTree.attachPart(p.x, p.y, p.type, p.fuel);
+        this.renderRocket();
+        this.syncExportableState();
+      },
+      clearRocket: () => this.clearRocket(),
+      setPayload: kind => {
+        this.partKinds.COCKPIT = kind;
+        this.applyPayload(kind);
+        this.refreshVariantBays();
+      }
+    };
+  }
+
+  /** Flight School's last step: every part comes off (leaves first), each with a small poof. */
+  private clearRocket(): void {
+    const rootId = this.rocketTree.getRootNode().id;
+    const size = BuilderScene.CELL_SIZE;
+    let removed = true;
+    while (removed) {
+      removed = false;
+      for (const n of this.rocketTree.getAllNodes()) {
+        if (n.id === rootId || n.childrenIds.length > 0) continue;
+        if (!this.rocketTree.removeNode(n.id).success) continue;
+        removed = true;
+        this.particleManager.triggerEffect('PART_DISASSEMBLE', this.gridOriginX + n.gridX * size + size / 2, this.gridOriginY + n.gridY * size + size / 2);
+      }
+    }
+    playSfx(this, 'UI_BLOCK_DELETE');
+    this.renderRocket();
+    this.shellTipId = null;
+    this.shellTipSig = '';
+    this.drawShellTip();
+    this.syncExportableState('[RocketBuilder] Guide rocket cleared:');
+  }
+
+  private cellRect(x: number, y: number): Rect {
+    const size = BuilderScene.CELL_SIZE;
+    return rect(this.gridOriginX + x * size, this.gridOriginY + y * size, size, size);
+  }
+
+  private guideRect(target: LabTarget): Rect | null {
+    const size = BuilderScene.CELL_SIZE;
+    const launchY = PANEL_TOP + this.hudHeight + 12;
+    const partsY = PANEL_TOP + 150 + 12;
+    switch (target) {
+      case 'grid':
+        return rect(this.gridOriginX, this.gridOriginY, BuilderScene.GRID_COLS * size, BuilderScene.GRID_ROWS * size);
+      case 'root':
+        return this.cellRect(this.rocketTree.getRootNode().gridX, this.rocketTree.getRootNode().gridY);
+      case 'rocket':
+        return rect(this.gridOriginX + 4 * size, this.gridOriginY + 5 * size, 7 * size, 7 * size);
+      case 'picture':
+        return PICTURE;
+      case 'parts':
+        return rect(RIGHT_X, partsY, SIDE_W, PANEL_BOTTOM - partsY);
+      case 'telemetry':
+        return rect(SIDE_X, PANEL_TOP, SIDE_W, this.hudHeight);
+      case 'lift':
+        return rect(SIDE_X, PANEL_TOP + 118, SIDE_W, this.hudHeight - 118);
+      case 'launch':
+        return rect(SIDE_X, launchY, SIDE_W, 84);
+      case 'bank':
+        return rect(SIDE_X, launchY + 96, SIDE_W, 72);
+      case 'mission':
+        return rect(RIGHT_X, PANEL_TOP, SIDE_W, 150);
+      case 'flyout':
+        return this.flyoutFor ? rect(this.flyoutRect.x, this.flyoutRect.y, this.flyoutRect.width, this.flyoutRect.height) : null;
+      default: {
+        const bay = this.paletteBays.find(b => `slot:${b.type}` === target);
+        if (!bay) return null;
+        const h = SLOT_H * bay.container.scaleY;
+        return rect(RIGHT_X + 4, bay.container.y - h / 2 - 2, SIDE_W - 8, h + 4);
+      }
+    }
   }
 
   /** Pause menu (scenes/PauseScene.ts): this scene is frozen while it is open. */
@@ -609,14 +726,16 @@ export class BuilderScene extends Phaser.Scene {
   /** Hand the assembled rocket to the flight simulator; the builder sleeps so the design is kept. */
   public launchFlight(): void {
     const telemetry = this.rocketTree.getTelemetry();
-    if (!this.launchReady) {
+    if (!this.launchReady || (this.labGuide && !this.labGuide.allowLaunch())) {
       playSfx(this, 'CLICK_FAIL');
       this.cameras.main.shake(120, 0.004);
       return;
     }
     playSfx(this, 'UI_CLICK');
     this.deselectPart();
-    this.scene.launch('FlightScene', { tree: telemetry.tree });
+    const guided = !!this.labGuide?.guidingFlight;
+    this.labGuide?.onLaunched();
+    this.scene.launch('FlightScene', { tree: telemetry.tree, guide: guided });
     this.scene.sleep();
   }
 
@@ -730,6 +849,7 @@ export class BuilderScene extends Phaser.Scene {
 
   /** Pick a fuel / engine type (selects that part) or a payload (swaps the root slot), then refresh the slot. */
   public setPartKind(type: VariantPart, kind: PartKind): void {
+    if (type === 'COCKPIT' && kind !== this.partKinds.COCKPIT && this.labGuide && !this.labGuide.allowPayloadChange()) return;
     if (this.isLocked(kind) && !this.tryUnlock(kind as FuelKind)) return;
     this.partKinds[type] = kind;
     if (type === 'COCKPIT') this.applyPayload(kind as PayloadKind);
@@ -936,7 +1056,10 @@ export class BuilderScene extends Phaser.Scene {
     });
     this.input.keyboard?.on('keydown-P', () => this.openPause());
 
-    this.input.keyboard?.on('keydown-ENTER', () => this.launchFlight());
+    this.input.keyboard?.on('keydown-ENTER', () => {
+      // While Mission Control shows an OK, ENTER answers it instead.
+      if (!this.labGuide?.capturesKeys) this.launchFlight();
+    });
     // Hovering an RCS shell and pressing a key binds that key to separate it in flight.
     this.input.keyboard?.on('keydown', (e: KeyboardEvent) => {
       if (!this.shellTipId || e.ctrlKey || e.metaKey || e.altKey || e.code === 'KeyP') return;
@@ -954,13 +1077,18 @@ export class BuilderScene extends Phaser.Scene {
       if (this.game.canvas) this.game.canvas.style.cursor = 'default';
       this.refreshEconomy();
       this.syncExportableState();
+      this.labGuide?.onWake();
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       if (this.flyoutFor) {
         const bay = this.paletteBays.find(b => b.type === this.flyoutFor);
         const overBay = bay && Math.abs(pointer.worldX - bay.container.x) <= SLOT_W / 2 + 8 && Math.abs(pointer.worldY - bay.container.y) <= SLOT_H / 2;
-        if (!overBay && !this.flyoutRect.contains(pointer.worldX, pointer.worldY)) this.hideFlyout();
+        if (!overBay && !this.flyoutRect.contains(pointer.worldX, pointer.worldY)) {
+          if (this.pinnedFlyout) {
+            if (this.flyoutFor !== this.pinnedFlyout) this.showFlyout(this.pinnedFlyout);
+          } else this.hideFlyout();
+        }
         else {
           const kind = this.flyoutKindAt(pointer);
           if (kind !== this.flyHoverKind) {
@@ -973,6 +1101,8 @@ export class BuilderScene extends Phaser.Scene {
     });
 
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      // Mission Control's spotlight: clicks in the dark (or on its box) never reach the lab.
+      if (this.labGuide?.blocks(pointer.worldX, pointer.worldY)) return;
       // The flyout sits over the build bay, so it gets the click first.
       if (this.flyoutFor && this.flyoutRect.contains(pointer.worldX, pointer.worldY)) {
         const kind = this.flyoutKindAt(pointer);
@@ -1181,7 +1311,9 @@ export class BuilderScene extends Phaser.Scene {
     }
 
     const type = this.placedType(this.selectedPartType);
-    const attachResult = this.rocketTree.attachPart(col, row, type, type === 'FUEL_TANK' ? (this.partKinds.FUEL_TANK as FuelKind) : undefined);
+    const fuel = type === 'FUEL_TANK' ? (this.partKinds.FUEL_TANK as FuelKind) : undefined;
+    if (this.labGuide && !this.labGuide.allowPlace(col, row, type, fuel)) return;
+    const attachResult = this.rocketTree.attachPart(col, row, type, fuel);
     if (attachResult.success && attachResult.node) {
       playSfx(this, 'UI_CLICK');
       this.renderRocket();
@@ -1189,6 +1321,7 @@ export class BuilderScene extends Phaser.Scene {
       this.syncExportableState('[RocketBuilder] Part attached:');
 
       this.animatePlacement(attachResult.node);
+      this.labGuide?.onChanged();
     } else {
       playSfx(this, 'CLICK_FAIL');
       this.particleManager.triggerEffect('REJECTION_ERROR', pointer.worldX, pointer.worldY);
@@ -1241,6 +1374,7 @@ export class BuilderScene extends Phaser.Scene {
 
     const targetNode = this.rocketTree.getNodeAt(col, row);
     if (!targetNode) return;
+    if (this.labGuide && !this.labGuide.allowRemove()) return;
 
     const removeResult = this.rocketTree.removeNode(targetNode.id);
     if (removeResult.success) {

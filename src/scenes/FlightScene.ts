@@ -44,15 +44,40 @@ import { formatDistance, TEXT_STYLE, TITLE_STYLE, UI } from '../ui/theme';
 import { preloadGameAssets } from '../core/assets';
 import { createSpriteAnimations } from '../core/spriteSheets';
 import { EngineLoop, LoopSfx, playSfx } from '../core/sound';
+import { isBoosterFuel } from '../core/partDefinitions';
 import { ChallengeCard, ChallengeContext, ChallengeEvent, ChallengeRunner, Combo, createChallenges } from '../modules';
 import { Effects } from './flight/Effects';
+import { FlightGuide, FlightHost } from '../guide/FlightGuide';
+import { finishGameGuide, loadGuide, saveGuide } from '../guide/guideProgress';
+import { GUIDE_OUTCOME_KEY, GuideOutcome } from '../guide/LabGuide';
+import { Rect, rect } from '../guide/geometry';
+import { FlightTarget } from '../guide/script';
+import { speech } from '../guide/speech';
+import { missionCall } from '../game/missionCalls';
 import { CameraMode, MissionOverlay, WorldRenderer, WORLD_COLORS } from './flight/WorldRenderer';
 
 export interface FlightSceneData {
   tree: HierarchicalRocketNode;
+  /** Flight School's guided flight (src/guide/FlightGuide.ts): free, pays only the guide bonus, crashes rewind. */
+  guide?: boolean;
+}
+
+/** A guided flight's save point: where a crash rewinds to. */
+interface GuideCheckpoint {
+  snapshot: ReturnType<FlightSim['snapshot']>;
+  phase: PhaseId;
+  phasesDone: number;
+  throttle: number;
 }
 
 const GAME_SPEED = CONFIG.gameSpeed;
+/** Flight School at the Moon: time runs this much slower while the pilot brakes into orbit. */
+const GAME_OVER_STING_MS = 2300;
+const ACHIEVEMENT_GAP_MS = 600;
+const GUIDE_MOON_SLOW = 0.5;
+/** How fast Mission Control's autopilot turns the nose (rad per real second). */
+const GUIDE_TURN_RATE = 2;
+const wrapAngle = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 const COUNTDOWN_SECONDS = 3;
 /** How long a low fuel type keeps the buzzer going. */
 const FUEL_BUZZ_MS = 20000;
@@ -177,6 +202,7 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
   /** When each fuel type went low (scene time, ms): its buzzer gives up after FUEL_BUZZ_MS. */
   private lowFuelSince = new Map<string, number>();
   private finishedAt: number | null = null;
+  private lastAchievementAt = -Infinity;
   private result: MissionResult | null = null;
   private earnings: FlightEarnings | null = null;
   private completedNow: Mission[] = [];
@@ -221,6 +247,13 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
   private dropMarker: { x: number; y: number } | null = null;
   private impactMarker: { x: number; y: number } | null = null;
   private markerAt = -Infinity;
+  /** Flight School: Mission Control talks the player through this flight. */
+  private guided = false;
+  private guide: FlightGuide | null = null;
+  /** Mission Control is talking: the flight stands still. */
+  private guideHold = false;
+  /** Flight School at the Moon: Mission Control keeps the nose pointing backwards and slows time down. */
+  private moonAssist = false;
 
   constructor() {
     super('FlightScene');
@@ -229,6 +262,10 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
   init(data: FlightSceneData): void {
     this.sideSlide = 0;
     this.tree = data.tree;
+    this.guided = !!data.guide;
+    this.guide = null;
+    this.guideHold = false;
+    this.moonAssist = false;
     this.throttle = 1;
     this.countdown = null;
     this.launched = false;
@@ -258,7 +295,8 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     this.phasePaid = 0;
     const minSpawnDist = CONFIG.network.collision.assetRadius * 2;
     this.network = [];
-    for (const asset of this.progress.assets.filter(a => a.daysLeft > 0)) {
+    // The guided flight flies an empty sky: no satellites from earlier flights to bump into.
+    for (const asset of this.guided ? [] : this.progress.assets.filter(a => a.daysLeft > 0)) {
       const body = asset.kind === 'SATELLITE' ? liveSatellite(asset, Math.random) : null;
       if (body) {
         for (let tries = 0; tries < 20; tries++) {
@@ -297,7 +335,8 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     this.runner = new PhaseRunner('ORBIT', 0, Math.random, this.payload);
     this.runner.drainEvents();
     this.applySiteChoice();
-    this.challenges = createChallenges();
+    // The guided flight meets every challenge once, the jammed shell included.
+    this.challenges = createChallenges(Math.random, { guided: this.guided });
     this.cost = rocketCost(flattenParts(this.tree));
     this.exposeForDebug();
     if (this.game.canvas) this.game.canvas.style.cursor = 'default';
@@ -308,6 +347,7 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     this.fx = new Effects(this);
     this.createHud();
     this.setupInput();
+    if (this.guided) this.guide = new FlightGuide(this.guideHost());
     this.engineSound = new EngineLoop(this, 'ROCKET_FLYING');
     this.rcsSound = new EngineLoop(this, 'ROCKET_ENGINE');
     this.buzzer = new LoopSfx(this, 'BUZZER');
@@ -316,6 +356,7 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
       this.engineSound?.stop();
       this.rcsSound?.stop();
       this.buzzer?.stop();
+      speech.stop(this);
     });
   }
 
@@ -351,7 +392,8 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
 
     const [verdict, color] = this.verdict();
     const affordable = this.progress.money >= this.cost;
-    this.launchButton = new LaunchButton(this, 640, 600, verdict, color, affordable ? `Launch cost $${this.cost}  ·  SPACE` : `Costs $${this.cost}, you have $${this.progress.money}`, () =>
+    const caption = this.guided ? 'Free in Flight School  ·  SPACE' : affordable ? `Launch cost $${this.cost}  ·  SPACE` : `Costs $${this.cost}, you have $${this.progress.money}`;
+    this.launchButton = new LaunchButton(this, 640, 600, verdict, color, caption, () =>
       this.startCountdown()
     );
     this.missionText = this.add.text(640, 168, '', TEXT_STYLE(15, UI.goldText)).setOrigin(0.5);
@@ -387,8 +429,10 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     this.sim.windScale = timeOfDayWind(time);
     this.world.setTimeOfDay(time);
     const reward = this.mission ? Math.round(this.mission.reward * timeOfDayReward(time)) : 0;
-    this.missionText.setText(this.mission ? `MISSION: ${this.mission.title}: ${this.mission.goal}  (+$${reward})` : 'All missions done: fly for the high score!');
+    if (this.guided) this.missionText.setText('FLIGHT SCHOOL: fly the satellite to the Moon and let it go');
+    else this.missionText.setText(this.mission ? `MISSION: ${this.mission.title}: ${this.mission.goal}  (+$${reward})` : 'All missions done: fly for the high score!');
     this.skyCards.setSelected(time);
+    this.guide?.onSkyPick(time);
   }
 
   private stepTimeOfDay(dir: number): void {
@@ -425,6 +469,7 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
   private setupInput(): void {
     this.keys = this.input.keyboard!.addKeys('W,S,SHIFT,CTRL,Z,X,A,D,E,F,LEFT,RIGHT,UP,DOWN,SPACE,ENTER,ESC,R,B,P,TAB,ONE,TWO,THREE,FOUR,FIVE,SIX,SEVEN,EIGHT,NINE') as Keys;
     this.keys.SPACE.on('down', () => {
+      if (this.guide && (this.guide.capturesKeys || !this.guide.allowsKey('SPACE'))) return;
       if (this.sim.phase === 'PRELAUNCH') this.startCountdown();
       else if (this.runner.deploySatellite(this.sim) || this.runner.dropRover(this.sim)) {
         const at = this.world.rocketScreen(this.sim);
@@ -445,11 +490,17 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     this.keys.F.on('down', () => (this.repairPressed = true));
     this.keys.Z.on('down', () => (this.throttle = 1));
     this.keys.X.on('down', () => (this.throttle = 0));
+    this.keys.W.on('down', () => this.guide?.onKey('W'));
     this.keys.ENTER.on('down', () => {
-      if (!this.result && this.launched) this.finishMission();
+      if (!this.result && this.launched && !this.guided) this.finishMission();
     });
     // ESC and P pause. Once the result panel is up there is nothing to pause, so ESC still goes to the lab.
-    this.keys.ESC.on('down', () => (this.result ? this.returnToBuilder() : this.openPause()));
+    this.keys.ESC.on('down', () => {
+      // A guided flight's result waits for Mission Control's last word.
+      if (this.result && this.guided) return;
+      if (this.result) this.returnToBuilder();
+      else this.openPause();
+    });
     this.keys.P.on('down', () => {
       if (!this.result) this.openPause();
     });
@@ -461,6 +512,7 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
       if (open) this.pickSite((this.chosen[open.kind === 'ROVER' ? 'rover' : 'landing'] + 1) % open.sites.length);
     });
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer, over: unknown[]) => {
+      if (this.guide?.blocks(pointer.x, pointer.y)) return;
       const open = this.pickable();
       if (!open || over.length > 0 || this.world.camera.mode !== 'ORBIT') return;
       const w = this.world.toWorld(pointer.x, pointer.y);
@@ -480,6 +532,8 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
       if (this.result || !this.launched || e.repeat) return;
       const key = normalizeKey(e.key.length === 1 ? e.key : '');
       if (!key) return;
+      if (this.guide && !this.guide.allowsKey(key)) return;
+      this.guide?.onKey(key);
       // A jammed shell swallows its key until it is freed.
       if (this.challenges.onSeparationKey(key, this.challengeContext(0, 0))) {
         this.cameras.main.shake(120, 0.005);
@@ -490,10 +544,10 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
       this.fx.ring(at.x, at.y, WORLD_COLORS.rover, 70, 0.5);
     });
     this.keys.B.on('down', () => {
-      if (this.result) this.returnToBuilder();
+      if (this.result && !this.guided) this.returnToBuilder();
     });
     this.keys.R.on('down', () => {
-      if (!this.result) return;
+      if (!this.result || this.guided) return;
       if (this.canRetryPhase) this.retryFromCheckpoint();
       else this.scene.restart({ tree: this.tree });
     });
@@ -644,6 +698,13 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
 
   private startCountdown(): void {
     if (this.sim.phase !== 'PRELAUNCH' || this.countdown !== null) return;
+    if (this.guided) {
+      // The guided flight is free and always goes at dawn (the other skies were only a peek).
+      this.setTimeOfDay('DAWN');
+      this.countdown = COUNTDOWN_SECONDS;
+      this.countdownText.setVisible(true);
+      return;
+    }
     if (this.progress.money < this.cost) {
       this.showBanner(`Not enough money: this rocket costs $${this.cost}. Build a cheaper one (ESC).`, '#fca5a5');
       return;
@@ -669,7 +730,8 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
   }
 
   private currentInput(_t: FlightTelemetry): ControlInput {
-    return { throttle: this.throttle, steer: this.steerKey() };
+    // While Mission Control's autopilot holds the nose at the Moon, A / D do nothing (and burn no cold gas).
+    return { throttle: this.throttle, steer: this.moonAssist ? 0 : this.steerKey() };
   }
 
   // ---------------------------------------------------------------------------
@@ -680,13 +742,15 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     const dt = Math.min(deltaMs / 1000, 0.05);
     let t = this.sim.getTelemetry();
 
-    if (!this.result) {
+    if (!this.result && !this.guideHold) {
       this.readThrottle(dt);
       this.tickCountdown(dt);
       // The rock belt eases time down a little; the phases fast-forward quiet orbits.
-      this.timeScale = this.runner.timeScale(this.sim) * this.challenges.timeScale;
+      this.timeScale = this.runner.timeScale(this.sim) * this.challenges.timeScale * (this.moonAssist ? GUIDE_MOON_SLOW : 1);
       const gameDt = dt * GAME_SPEED * this.timeScale;
+      if (this.moonAssist) this.holdNoseBackwards(dt);
       this.sim.advance(gameDt, this.currentInput(t));
+      if (this.guided) this.refillHealth();
 
       if (this.runner.satellite) stepRover(this.runner.satellite, this.newSatelliteLost ? gameDt * CONFIG.network.collision.fallTimeScale : gameDt);
       this.stepNetwork(gameDt);
@@ -723,8 +787,27 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
           }
         }
       }
-      if (this.finishedAt !== null && this.time.now - this.finishedAt > this.resultDelayMs()) this.finishMission();
+      if (this.finishedAt !== null && this.time.now - this.finishedAt > this.resultDelayMs()) {
+        // A guided flight that fails rewinds instead of ending.
+        if (this.guide && !this.runner.complete) this.guide.onFailed();
+        else this.finishMission();
+      }
     }
+    this.guide?.update({
+      onPad: this.sim.phase === 'PRELAUNCH' && this.countdown === null,
+      counting: this.countdown !== null,
+      launched: this.launched,
+      altitude: t.earthAltitude,
+      airDensity: t.airDensity,
+      canSeparate: this.sim.canSeparate,
+      separated: this.sim.separated,
+      rcsReady: this.sim.rcsReady,
+      inMoonOrbit: !!t.moonOrbit,
+      moonAltitude: t.moonAltitude,
+      moonPeriapsis: t.moonOrbit?.periapsisAltitude ?? null,
+      stableOrbit: isStableOrbit(t),
+      noseBackwards: Math.abs(wrapAngle(Math.atan2(-this.sim.state.vy, -this.sim.state.vx) - this.sim.state.theta)) < 0.3
+    });
 
     if (this.sim.version !== this.lastVersion) {
       this.lastVersion = this.sim.version;
@@ -871,6 +954,7 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
 
   /** Banners, alarms and awards for the flight challenges. */
   private handleChallengeEvents(events: ChallengeEvent[]): void {
+    this.guide?.onChallengeEvents(events);
     for (const e of events) {
       if (e.kind === 'ROCK_HIT') {
         // A boulder's lost part already shakes and sounds through the sim's PART_LOST event.
@@ -897,11 +981,13 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
         continue;
       }
       this.showBanner(e.message, e.good ? UI.greenText : '#fca5a5');
+      if (e.good) this.playAchievement();
       if (e.award) this.celebrate({ id: 'CHALLENGE', label: e.award.label, points: e.award.points });
     }
   }
 
   private handlePhaseEvents(events: PhaseEvent[]): void {
+    this.guide?.onPhaseEvents(events);
     for (const e of events) {
       switch (e.kind) {
         case 'PHASE_START':
@@ -909,13 +995,15 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
           this.showPhaseTitle(e.phase);
           break;
         case 'PHASE_DONE': {
-          const reward = Math.round(CONFIG.economy.phaseRewards[e.phase] * timeOfDayReward(this.timeOfDay));
+          // The guided flight pays only the guide's own bonus at the end.
+          const reward = this.guided ? 0 : Math.round(CONFIG.economy.phaseRewards[e.phase] * timeOfDayReward(this.timeOfDay));
           this.progress = { ...this.progress, money: this.progress.money + reward };
           this.phasePaid += reward;
           saveProgress(this.progress);
           const at = this.world.rocketScreen(this.sim);
-          this.fx.popup(at.x, at.y - 80, `PHASE ${phaseNumber(this.runner.chain, e.phase)} COMPLETE  +$${reward}`, UI.greenText, 24);
+          this.fx.popup(at.x, at.y - 80, `PHASE ${phaseNumber(this.runner.chain, e.phase)} COMPLETE${reward > 0 ? `  +$${reward}` : ''}`, UI.greenText, 24);
           this.fx.ring(at.x, at.y, 0x4ade80, 220, 0.9);
+          this.playAchievement();
           break;
         }
         case 'PROBLEM_START':
@@ -925,7 +1013,10 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
           break;
         case 'PROBLEM_END':
           this.showBanner(e.problem.message ?? '', e.problem.status === 'SOLVED' ? UI.greenText : '#fca5a5');
-          if (e.problem.status === 'SOLVED') this.stunts.record({ id: 'MISSION', label: 'FIXED', points: 300 });
+          if (e.problem.status === 'SOLVED') {
+            this.stunts.record({ id: 'MISSION', label: 'FIXED', points: 300 });
+            this.playAchievement();
+          }
           break;
         case 'DROP_READY':
           this.showBanner('Rover ready! Press SPACE when the yellow ✕ sits in the green zone', UI.goldText);
@@ -1053,11 +1144,31 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     const at = this.world.rocketScreen(this.sim);
     this.fx.popup(at.x + 100, at.y - 50, award.points > 0 ? `+${award.points}  ${award.label}` : award.label, AWARD_COLORS[award.id] ?? '#f0abfc', 16);
     if (award.id === 'NEAR_MISS') this.fx.ring(at.x, at.y, 0xf0abfc, 70, 0.4);
+    this.playAchievement();
+  }
+
+  /** The achievement chime; several achievements at the same moment ring once. */
+  private playAchievement(): void {
+    if (this.time.now - this.lastAchievementAt < ACHIEVEMENT_GAP_MS) return;
+    this.lastAchievementAt = this.time.now;
+    playSfx(this, 'ACHIEVEMENT');
   }
 
   // ---------------------------------------------------------------------------
   // HUD update
   // ---------------------------------------------------------------------------
+
+  /**
+   * Flight School: health running out would end the guided flight (and a rewind would bring back the same
+   * damaged hull), so it is refilled for free instead, before the phase runner checks it.
+   */
+  private refillHealth(): void {
+    if (this.sim.phase !== 'FLYING' || this.sim.hull > 0) return;
+    this.sim.restoreHull();
+    const p = this.world.rocketScreen(this.sim);
+    this.fx.popup(p.x, p.y - 90, 'HEALTH RESTORED', UI.greenText, 22);
+    playSfx(this, 'UI_CLICK');
+  }
 
   private updateHud(t: FlightTelemetry, dt: number): void {
     const now = this.time.now;
@@ -1118,7 +1229,7 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     this.skyCards.setVisible(onPad);
     this.launchButton.update(now);
     this.missionText.setVisible(onPad);
-    this.endButton.setVisible(flying && this.launched);
+    this.endButton.setVisible(flying && this.launched && !this.guided);
     this.warpText.setText(this.timeScale > 1 && flying ? `▶▶ ×${this.timeScale}` : '');
 
     const comboOn = this.combo.active(this.sim.state.time) && this.combo.count > 1;
@@ -1273,6 +1384,19 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
       failure: r.failure ?? (r.complete ? undefined : 'Flight ended early')
     });
 
+    if (this.guided) {
+      // Flight School: no flight money, no missions or assets; the first finish pays the guide bonus.
+      const { guide, bonus } = finishGameGuide(loadGuide());
+      saveGuide(guide);
+      this.completedNow = [];
+      this.earnings = { outcome: 0, awards: 0, mission: 0, recovery: 0, bonus, total: bonus };
+      this.progress = { ...this.progress, money: this.progress.money + bonus };
+      saveProgress(this.progress);
+      this.showResultPanel(this.result);
+      this.guide?.onResult(bonus);
+      return;
+    }
+
     const ctx: MissionContext = {
       stats: st,
       report: this.report,
@@ -1298,6 +1422,10 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     };
     saveProgress(this.progress);
     if (!r.complete) playSfx(this, 'GAME_OVER');
+    // Control station's call comes after the game-over sting (it would talk over it).
+    this.time.delayedCall(r.complete ? 0 : GAME_OVER_STING_MS, () => {
+      if (!this.sound.mute) speech.say(missionCall(r.complete), this);
+    });
     this.showResultPanel(this.result);
   }
 
@@ -1339,7 +1467,7 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
   }
 
   public launchAgainFromPause(): void {
-    this.scene.restart({ tree: this.tree });
+    this.scene.restart({ tree: this.tree, guide: this.guided });
   }
 
   public leaveToBuilderFromPause(): void {
@@ -1348,6 +1476,107 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
 
   public resumedFromPause(): void {
     this.steerLocked = true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Flight School hooks (src/guide/FlightGuide.ts)
+  // ---------------------------------------------------------------------------
+
+  private guideHost(): FlightHost {
+    return {
+      scene: this,
+      rectOf: target => this.guideRect(target),
+      hold: on => {
+        this.guideHold = on;
+        if (!on) return;
+        this.steerLocked = true;
+        // Mission Control does the talking now: drop banners queued up for this moment.
+        this.bannerQueue = [];
+        this.bannerTimer = 0;
+      },
+      checkpoint: (): GuideCheckpoint => ({ snapshot: this.sim.snapshot(), phase: this.runner.phase, phasesDone: this.runner.phasesDone, throttle: this.throttle }),
+      setThrottle: level => (this.throttle = level),
+      assistMoon: on => (this.moonAssist = on),
+      topUpFuel: kg => this.topUpBoosterFuel(kg),
+      rewind: cp => this.guideRewind(cp as GuideCheckpoint | null),
+      leave: (outcome: GuideOutcome) => {
+        this.registry.set(GUIDE_OUTCOME_KEY, outcome);
+        this.returnToBuilder();
+      }
+    };
+  }
+
+  private guideRect(target: FlightTarget): Rect | null {
+    switch (target) {
+      case 'sky':
+        return rect(640 - 264, 178, 528, 122);
+      case 'launch':
+        return rect(640 - 160, 600 - 72, 320, 132);
+      case 'instruments':
+        return rect(14, 700 - 410 * 1.2 - 14, 108 * 1.2 + 12, 410 * 1.2 + 20);
+      case 'challenge':
+        return rect(640 - 244, 100, 488, 136);
+      case 'orbit':
+      case 'height':
+        return rect(1156, 106, 108, 498);
+      case 'goal':
+        return rect(14, 16, 400, 76);
+      case 'result':
+        return rect((1280 - 460) / 2 - 6, (720 - 330) / 2 - 12, 472, 352);
+    }
+  }
+
+  /** Back to a guided flight's save point after a crash: nothing is paid or lost. */
+  private guideRewind(cp: GuideCheckpoint | null): void {
+    if (!cp) {
+      this.scene.restart({ tree: this.tree, guide: true });
+      return;
+    }
+    this.sim = FlightSim.restore(cp.snapshot);
+    this.sim.windScale = timeOfDayWind(this.timeOfDay);
+    this.sim.restoreHull(); // every retry starts with full health
+    this.runner = new PhaseRunner(cp.phase, cp.phasesDone, Math.random, this.payload);
+    this.runner.drainEvents();
+    this.applySiteChoice();
+    // The challenges start over too, so a used jam, rock field or radiation dose can't leave the retry stuck.
+    this.challenges = createChallenges(Math.random, { guided: true });
+    this.moonAssist = false;
+    this.exposeForDebug();
+    this.crewLanding = null;
+    this.result = null;
+    this.earnings = null;
+    this.resultPanel?.destroy();
+    this.resultPanel = null;
+    this.finishedAt = null;
+    this.exploded = false;
+    this.lowFuelSince = new Map();
+    this.throttle = cp.throttle;
+    this.lastVersion = this.sim.version;
+    this.bannerQueue = [];
+    this.dropMarker = null;
+    this.impactMarker = null;
+    this.steerLocked = true;
+  }
+
+  /**
+   * Flight School at the Moon: turn the nose smoothly to point against the motion (retrograde) and keep it
+   * there, so the pilot only has to brake. No cold gas is used: it is Mission Control's autopilot.
+   */
+  private holdNoseBackwards(dt: number): void {
+    const s = this.sim.state;
+    if (Math.hypot(s.vx, s.vy) < 1) return;
+    const err = wrapAngle(Math.atan2(-s.vy, -s.vx) - s.theta);
+    const step = GUIDE_TURN_RATE * dt;
+    s.theta += Math.max(-step, Math.min(step, err));
+    s.omega = 0;
+  }
+
+  /** Flight School at the Moon: make sure the boosters hold at least `kg` of fuel, so braking into orbit can always work. */
+  private topUpBoosterFuel(kg: number): void {
+    const missing = kg - this.sim.boosterFuel;
+    if (missing <= 0) return;
+    const tank = this.sim.vehicle.parts.find(p => this.sim.tanks.has(p.id) && isBoosterFuel(p.fuelKind));
+    if (tank) this.sim.tanks.set(tank.id, this.sim.tanks.get(tank.id)! + missing);
   }
 
   /** What this flight leaves behind: the ejected satellite on its orbit, or the rover that came down in the zone. */
@@ -1492,14 +1721,21 @@ export class FlightScene extends Phaser.Scene implements PauseHost {
     });
 
     // One short mission line.
-    const won = this.completedNow.length > 0;
-    const missionLine = won ? `MISSION DONE  +$${this.completedNow.reduce((n, m) => n + m.reward, 0)}` : this.mission ? 'MISSION NOT DONE' : '';
+    const won = this.completedNow.length > 0 || this.guided;
+    const guideBonus = this.earnings?.bonus ?? 0;
+    const missionLine = this.guided
+      ? `FLIGHT SCHOOL DONE${guideBonus > 0 ? `  +$${guideBonus}` : ''}`
+      : won
+        ? `MISSION DONE  +$${this.completedNow.reduce((n, m) => n + m.reward, 0)}`
+        : this.mission
+          ? 'MISSION NOT DONE'
+          : '';
     if (missionLine) items.push(pixelTitle(this, cx, y + 216, missionLine, 8, won ? PX.text.green : PX.text.muted).setOrigin(0.5, 0));
 
-    // Where the payout came from: the base, then each bonus.
+    // Where the payout came from: the base, then each bonus (a guided flight pays only the guide bonus).
     const pay = payoutBreakdown(this.runner.complete, OUTCOME_PAYOUT[result.outcome], this.sim.stats.partsLost, this.cost, timeOfDayReward(this.timeOfDay));
     const lines = [`BASE $${pay.base}`, pay.clean ? `CLEAN +$${pay.clean}` : '', pay.cheap ? `CHEAP +$${pay.cheap}` : '', pay.time ? `${this.timeOfDay} +$${pay.time}` : ''].filter(Boolean);
-    if (pay.base > 0) items.push(pixelBody(this, cx, y + 236, lines.join('   '), 16, PX.text.muted).setOrigin(0.5, 0));
+    if (pay.base > 0 && !this.guided) items.push(pixelBody(this, cx, y + 236, lines.join('   '), 16, PX.text.muted).setOrigin(0.5, 0));
 
     const retry = this.canRetryPhase ? `RETRY P${phaseNumber(this.runner.chain, this.checkpoint!.phase)}` : 'FLY AGAIN';
     items.push(

@@ -21,6 +21,7 @@ const stats: FlightStats = {
   damageTaken: 0,
   bounces: 0,
   fuelCollected: 0,
+  healthRestored: 0,
   deltaVSpent: 0
 };
 const report: VehicleReport = {

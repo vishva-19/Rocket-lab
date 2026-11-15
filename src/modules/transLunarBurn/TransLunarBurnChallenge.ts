@@ -37,6 +37,29 @@ export function correctionKick(pos: Vec2, vel: Vec2, low: number, high: number, 
   return null;
 }
 
+/**
+ * The smallest turn of the velocity (same speed) that puts the Moon pass inside [low, high], or null
+ * if none within a radian does (a rocket aimed straight at the Moon needs about 0.6). `pos` is relative to the Moon's centre. Flight School uses it to
+ * steer a first-time pilot onto a pass that can be braked into an orbit, at no cost.
+ */
+export function aimedVelocity(pos: Vec2, vel: Vec2, low: number, high: number): Vec2 | null {
+  const speed = Math.hypot(vel.x, vel.y);
+  if (speed < 1e-6) return null;
+  const heading = Math.atan2(vel.y, vel.x);
+  for (let turn = 0; turn <= 1; turn += 0.0005) {
+    for (const sign of [1, -1]) {
+      const a = heading + sign * turn;
+      const v = { x: speed * Math.cos(a), y: speed * Math.sin(a) };
+      const pe = orbitFromState(pos, v, MOON.mu, MOON.radius).periapsisAltitude;
+      if (pe >= low && pe <= high) return v;
+    }
+  }
+  return null;
+}
+
+/** Flight School's pass: low enough that braking leaves the high point under the orbit's limit. */
+export const GUIDED_PASS = { low: 450, high: 800 };
+
 /** Fuel (kg) a burn of `dv` m/s costs a rocket of `mass` kg (rocket equation, booster efficiency). */
 export function burnFuel(mass: number, dv: number): number {
   return mass * (1 - Math.exp(-dv / (ENGINE.isp * G0)));
@@ -50,7 +73,8 @@ export function burnFuel(mass: number, dv: number): number {
 export class TransLunarBurnChallenge extends BandChallenge {
   public readonly id = 'TRANS_LUNAR_BURN' as const;
 
-  constructor() {
+  /** `guided`: Flight School. At the Moon's pull the path is turned onto an easy pass for free. */
+  constructor(private readonly guided = false) {
     super({ from: CFG.from, to: CFG.to, label: 'TLI', color: 0x4ade80 });
   }
 
@@ -98,10 +122,23 @@ export class TransLunarBurnChallenge extends BandChallenge {
 
   protected judge({ sim }: ChallengeContext) {
     const pe = predictedPass(sim);
+    if (this.guided) return { kind: 'END' as const, id: this.id, good: true, message: this.guide(sim) };
     if (pe >= CFG.lowPeriapsis && pe <= CFG.highPeriapsis) {
       return { kind: 'END' as const, id: this.id, good: true, message: 'Right on course for the Moon!', award: { label: 'ON COURSE', points: CFG.reward } };
     }
     return { kind: 'END' as const, id: this.id, good: false, message: this.correct(sim) };
+  }
+
+  /** Flight School: turn the path onto a pass that brakes into an orbit, free of charge. */
+  private guide(sim: FlightSim): string {
+    const s = sim.state;
+    const pe = predictedPass(sim);
+    if (pe >= GUIDED_PASS.low && pe <= GUIDED_PASS.high) return 'Right on course for the Moon!';
+    const v = aimedVelocity({ x: s.x - MOON_CENTER.x, y: s.y - MOON_CENTER.y }, { x: s.vx, y: s.vy }, GUIDED_PASS.low, GUIDED_PASS.high);
+    if (!v) return 'Way off course for the Moon';
+    s.vx = v.x;
+    s.vy = v.y;
+    return 'Mission Control nudged you onto a good path';
   }
 
   /** Off course at the Moon's pull: kick the path back into the green, paying extra fuel for it. */

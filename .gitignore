@@ -5,3 +5,4 @@ dist
 *.zip
 temp_main_menu/
 
+.firebase/

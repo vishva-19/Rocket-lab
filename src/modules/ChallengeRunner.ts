@@ -67,15 +67,19 @@ export class ChallengeRunner {
   }
 }
 
-/** Every challenge switched on in game.json, the timed one first so its card wins. */
-export function createChallenges(random: () => number = Math.random): ChallengeRunner {
+/**
+ * Every challenge switched on in game.json, the timed one first so its card wins.
+ * `guided` (Flight School): the first shell separation always jams, so every challenge shows once,
+ * and the Moon course is set right for free at the Moon's pull.
+ */
+export function createChallenges(random: () => number = Math.random, opts: { guided?: boolean } = {}): ChallengeRunner {
   const on = CONFIG.challenges;
   const modules: ChallengeModule[] = [];
-  if (on.stagingFault.enabled) modules.push(new StagingFaultChallenge(random));
+  if (on.stagingFault.enabled) modules.push(new StagingFaultChallenge(opts.guided ? () => 0 : random));
   if (on.maxQ.enabled) modules.push(new MaxQChallenge());
   if (on.windShear.enabled) modules.push(new WindShearChallenge(random));
   if (CONFIG.rockBelt.enabled) modules.push(new RockBeltChallenge(random));
   if (on.radiationBelt.enabled) modules.push(new RadiationBeltChallenge());
-  if (on.transLunarBurn.enabled) modules.push(new TransLunarBurnChallenge());
+  if (on.transLunarBurn.enabled) modules.push(new TransLunarBurnChallenge(opts.guided));
   return new ChallengeRunner(modules);
 }

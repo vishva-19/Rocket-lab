@@ -19,6 +19,7 @@ const baseStats: FlightStats = {
   damageTaken: 0,
   bounces: 0,
   fuelCollected: 0,
+  healthRestored: 0,
   deltaVSpent: 0
 };
 
