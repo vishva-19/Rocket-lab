@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { SHEET_COLUMNS, SPRITE_SHEETS } from '../core/spriteSheets';
 import { AssetKind } from '../game/moonNetwork';
+import { BATTERY_HINT } from '../game/nasaInfo';
 import { headerTab, hudFrame } from './CornerHud';
 import { PX } from './pixel';
 import { TEXT_STYLE, UI } from './theme';
@@ -18,6 +19,7 @@ const ICON_H = 48;
 const ICON_Y = 632;
 const PANEL_W = 236;
 const MAX_ROWS = 6;
+const HINT_H = 40;
 const ROW_H = 26;
 
 const KINDS: Array<{ kind: AssetKind; title: string; sheet: 'satellite' | 'rover'; clip: string; color: number; text: string }> = [
@@ -101,7 +103,7 @@ export class NetworkPanel {
     if (!k) return;
     const mine = this.assets.filter(a => a.kind === k.kind);
     const rows = Math.min(MAX_ROWS, mine.length);
-    const h = 40 + Math.max(1, rows) * ROW_H + (mine.length > MAX_ROWS ? 16 : 0) + 58;
+    const h = 40 + Math.max(1, rows) * ROW_H + (mine.length > MAX_ROWS ? 16 : 0) + 58 + HINT_H;
     const x = RIGHT - PANEL_W;
     const y = ICON_Y - 14 - h;
     hudFrame(g, x, y, PANEL_W, h, k.color, 0.9);
@@ -123,10 +125,11 @@ export class NetworkPanel {
       add(this.scene.add.text(x + PANEL_W - 14, ry, a.daysLeft <= 0 ? 'last flight' : `${a.daysLeft} d`, TEXT_STYLE(14, low ? '#f87171' : UI.text)).setOrigin(1, 0));
     });
     if (mine.length > MAX_ROWS) add(this.scene.add.text(x + 14, y + 30 + MAX_ROWS * ROW_H, `+${mine.length - MAX_ROWS} more`, TEXT_STYLE(12, UI.textMuted)));
-    const fy = y + h - 52;
+    const fy = y + h - 52 - HINT_H;
     g.fillStyle(0x000000, 0.35);
     g.fillRect(x + 10, fy - 4, PANEL_W - 20, 2);
     add(this.scene.add.text(x + 14, fy + 2, `Scout spots  ${this.sites}`, TEXT_STYLE(14, UI.text)));
     add(this.scene.add.text(x + 14, fy + 22, `Coverage  ${Math.round(this.coverage * 100)}%`, TEXT_STYLE(14, UI.text)));
+    add(this.scene.add.text(x + 14, fy + 46, BATTERY_HINT[k.kind], { ...TEXT_STYLE(11, UI.textMuted), wordWrap: { width: PANEL_W - 28 } }));
   }
 }

@@ -11,13 +11,16 @@ import { WindShearChallenge } from './windShear/WindShearChallenge';
 /** Runs the flight's challenges side by side; the scene only talks to this. */
 export class ChallengeRunner {
   private events: ChallengeEvent[] = [];
+  /** Challenges handled cleanly / not, counted as they end (for the mission report). */
+  public handled = 0;
+  public failed = 0;
 
   constructor(public readonly modules: readonly ChallengeModule[]) {}
 
   public update(ctx: ChallengeContext): void {
     for (const m of this.modules) {
       m.update(ctx);
-      this.events.push(...m.drainEvents());
+      this.collect(m);
     }
   }
 
@@ -25,10 +28,20 @@ export class ChallengeRunner {
   public onSeparationKey(key: string, ctx: ChallengeContext): boolean {
     for (const m of this.modules) {
       const used = m.onSeparationKey?.(key, ctx) ?? false;
-      this.events.push(...m.drainEvents());
+      this.collect(m);
       if (used) return true;
     }
     return false;
+  }
+
+  private collect(m: ChallengeModule): void {
+    for (const e of m.drainEvents()) {
+      if (e.kind === 'END') {
+        if (e.good) this.handled++;
+        else this.failed++;
+      }
+      this.events.push(e);
+    }
   }
 
   public drainEvents(): ChallengeEvent[] {

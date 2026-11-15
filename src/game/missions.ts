@@ -39,18 +39,18 @@ const nearMisses = (ctx: MissionContext) => ctx.awards.filter(a => a.id === 'NEA
 
 /** In order of difficulty — the first one not yet done is the "current" mission. */
 export const MISSIONS: Mission[] = [
-  { id: 'liftoff', title: 'Liftoff', goal: 'Get 200 m off the ground', reward: 20, check: c => c.stats.maxAltitude >= 200 },
-  { id: 'clouds', title: 'Above the clouds', goal: 'Climb past 1,500 m', reward: 30, check: c => c.stats.maxAltitude >= 1_500 },
-  { id: 'cheap-space', title: 'Space on a budget', goal: 'Reach space with a rocket costing $70 or less', reward: 60, check: c => c.stats.reachedSpace && c.cost <= 70 },
-  { id: 'staging', title: 'Staging', goal: 'Drop an empty booster in flight', reward: 40, check: c => c.stats.stagesDropped >= 1 },
-  { id: 'rock-dodger', title: 'Rock dodger', goal: 'Get 3 near misses in the rock belt', reward: 50, check: c => nearMisses(c) >= 3 },
-  { id: 'moon-soi', title: 'Moonbound', goal: 'Reach the Moon’s gravity', reward: 60, check: c => c.stats.reachedMoonSoi },
-  { id: 'orbiter', title: 'Phase 1: Lunar orbiter', goal: 'Get into a stable orbit around the Moon', reward: 80, check: c => c.phasesDone >= 1 },
-  { id: 'satellite', title: 'Satellite out', goal: 'Eject a satellite from a stable lunar orbit', reward: 80, payload: 'SATELLITE', check: c => c.payload === 'SATELLITE' && c.objectiveDone },
-  { id: 'rover', title: 'Rover delivered', goal: 'Crash a rover onto its landing zone', reward: 100, payload: 'ROVER', check: c => c.payload === 'ROVER' && c.objectiveDone },
-  { id: 'crew', title: 'Human landing', goal: 'Land the crew on the Moon', reward: 150, payload: 'CREW', check: c => c.payload === 'CREW' && c.objectiveDone },
-  { id: 'cool-head', title: 'Cool head', goal: 'Finish any mission without a single problem going wrong', reward: 200, check: c => c.objectiveDone && c.problemsFailed === 0 },
-  { id: 'lean-lander', title: 'Lean lander', goal: 'Land the crew with a rocket costing $120 or less', reward: 250, payload: 'CREW', check: c => c.payload === 'CREW' && c.objectiveDone && c.cost <= 120 }
+  { id: 'liftoff', title: 'Liftoff', goal: 'Get 200 m off the ground', reward: 32, check: c => c.stats.maxAltitude >= 200 },
+  { id: 'clouds', title: 'Above the clouds', goal: 'Climb past 1,500 m', reward: 40, check: c => c.stats.maxAltitude >= 1_500 },
+  { id: 'cheap-space', title: 'Space on a budget', goal: 'Reach space with a rocket costing $70 or less', reward: 80, check: c => c.stats.reachedSpace && c.cost <= 70 },
+  { id: 'staging', title: 'Staging', goal: 'Drop an empty booster in flight', reward: 48, check: c => c.stats.stagesDropped >= 1 },
+  { id: 'rock-dodger', title: 'Rock dodger', goal: 'Get 3 near misses in the rock belt', reward: 64, check: c => nearMisses(c) >= 3 },
+  { id: 'moon-soi', title: 'Moonbound', goal: 'Reach the Moon’s gravity', reward: 80, check: c => c.stats.reachedMoonSoi },
+  { id: 'orbiter', title: 'Phase 1: Lunar orbiter', goal: 'Get into a stable orbit around the Moon', reward: 104, check: c => c.phasesDone >= 1 },
+  { id: 'satellite', title: 'Satellite out', goal: 'Eject a satellite from a stable lunar orbit', reward: 104, payload: 'SATELLITE', check: c => c.payload === 'SATELLITE' && c.objectiveDone },
+  { id: 'rover', title: 'Rover delivered', goal: 'Crash a rover onto its landing zone', reward: 128, payload: 'ROVER', check: c => c.payload === 'ROVER' && c.objectiveDone },
+  { id: 'crew', title: 'Human landing', goal: 'Land the crew on the Moon', reward: 192, payload: 'CREW', check: c => c.payload === 'CREW' && c.objectiveDone },
+  { id: 'cool-head', title: 'Cool head', goal: 'Finish any mission without a single problem going wrong', reward: 248, check: c => c.objectiveDone && c.problemsFailed === 0 },
+  { id: 'lean-lander', title: 'Lean lander', goal: 'Land the crew with a rocket costing $120 or less', reward: 312, payload: 'CREW', check: c => c.payload === 'CREW' && c.objectiveDone && c.cost <= 120 }
 ];
 
 /** What the chosen payload asks of the pilot, in a line, and what finishing it pays (sum of its phases). */

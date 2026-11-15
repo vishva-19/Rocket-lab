@@ -1,3 +1,4 @@
+import { CONFIG } from '../config';
 import { describe, expect, it } from 'vitest';
 import { FlightStats } from './FlightSim';
 import { evaluateMission, OUTCOME_PAYOUT } from './mission';
@@ -57,6 +58,11 @@ describe('mission evaluation', () => {
       expect(results[i - 1].stars).toBeGreaterThanOrEqual(results[i].stars);
     }
     expect(OUTCOME_PAYOUT.CREW_LANDED).toBeGreaterThan(OUTCOME_PAYOUT.ROVER_DEPLOYED);
+  });
+
+  it('a crew landing pays only the phases the crew flies: orbit and landing, no rover', () => {
+    const pay = CONFIG.economy.phaseRewards;
+    expect(OUTCOME_PAYOUT.CREW_LANDED).toBe(pay.ORBIT + pay.LANDING);
   });
 
   it('explains design flaws in plain words', () => {

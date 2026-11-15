@@ -333,8 +333,13 @@ export class RocketTree {
     // Boosters need kerosene or hydrogen; RCS thrusters need cold gas.
     const missing =
       engineCount < 1 ? 'NEED CMD + FUEL + BOOSTER' : boosterTanks < 1 ? 'BOOSTERS NEED KEROSENE OR HYDROGEN' : rcsCount > 0 && gasTanks < 1 ? 'RCS NEEDS A COLD GAS TANK' : '';
-    const valid = missing === '' && fuelTankCount >= 1 && totalThrust >= totalMass;
     const boosterFuelMass = [...nodes].reduce((sum, n) => (n.fuel > 0 && isBoosterFuel(n.fuelKind) ? sum + n.fuel * FUEL_STATS[n.fuelKind ?? 'KEROSENE'].density : sum), 0);
+
+    // The rocket stands on the pad with its tanks full: thrust has to beat the fuelled weight, not the dry weight.
+    const liftoffThrust = boosterFuelMass > 0 ? (totalThrust * fuelThrustSum) / boosterFuelMass : 0;
+    const heavy = missing === '' && liftoffThrust <= totalMass + totalFuelMass;
+    const valid = missing === '' && fuelTankCount >= 1 && !heavy;
+    const reason = heavy ? 'TOO HEAVY TO LIFT OFF: ADD ENGINES OR DROP FUEL' : missing;
 
     return {
       valid,
@@ -345,9 +350,9 @@ export class RocketTree {
       totalFuelMass,
       // Engines push harder or softer depending on the fuel they burn (averaged over the fuel on board).
       // No kerosene or hydrogen aboard: the boosters have nothing to burn.
-      liftoffThrust: boosterFuelMass > 0 ? (totalThrust * fuelThrustSum) / boosterFuelMass : 0,
+      liftoffThrust,
       twr,
-      missing,
+      missing: reason,
       tree: this.buildHierarchicalNode(this.rootId)
     };
   }

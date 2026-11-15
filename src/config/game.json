@@ -57,7 +57,7 @@
   "fuelTypes": {
     "_note": "Per fuel: kg per litre (a tank holds parts.FUEL_TANK.fuelLiters), and multipliers on a booster's efficiency (isp) and push (thrust) while it burns this fuel. COLD_GAS only feeds RCS thrusters. unlockCost: one-time price to unlock the fuel in the lab (0 = open from the start).",
     "KEROSENE": { "density": 1.0, "isp": 1.0, "thrust": 1.0, "unlockCost": 0 },
-    "HYDROGEN": { "density": 0.55, "isp": 1.6, "thrust": 0.8, "unlockCost": 150 },
+    "HYDROGEN": { "density": 0.55, "isp": 1.6, "thrust": 0.8, "unlockCost": 250 },
     "COLD_GAS": { "density": 0.5, "isp": 1.0, "thrust": 1.0, "unlockCost": 0 }
   },
   "rcs": {
@@ -164,13 +164,13 @@
     "orbitViewRadiusPx": 355
   },
   "economy": {
-    "startingMoney": 100000000,
+    "startingMoney": 2000,
     "grantFloor": 50,
     "phaseRewards": {
-      "ORBIT": 120,
-      "ROVER": 330,
-      "DEPLOY": 150,
-      "LANDING": 700
+      "ORBIT": 152,
+      "ROVER": 408,
+      "DEPLOY": 192,
+      "LANDING": 880
     },
     "objectiveBonus": {
       "_note": "Extra share of the objective payout: no part lost in flight, and a cheap rocket.",
@@ -179,12 +179,12 @@
       "cheap": 0.15
     },
     "partialRewards": {
-      "SKY": 10,
-      "SPACE": 40,
-      "MOON_SOI": 70
+      "SKY": 8,
+      "SPACE": 48,
+      "MOON_SOI": 88
     },
-    "padBonus": 100,
-    "guideBonus": 200,
+    "padBonus": 128,
+    "guideBonus": 400,
     "recoveryRefund": 0.5
   },
   "hazards": {

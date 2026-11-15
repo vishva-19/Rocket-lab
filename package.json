@@ -11,6 +11,7 @@
     "test:diagnose": "node scripts/diagnose-cursor.mjs",
     "typecheck": "tsc --noEmit",
     "sprites": "node animated_sprites/tools/build.mjs",
+    "social": "node scripts/render-social.mjs",
     "voice": "node scripts/make-voice-lines.mjs"
   },
   "repository": {

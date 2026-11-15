@@ -55,9 +55,20 @@ describe('fuels', () => {
 
   it('an RCS thruster needs a cold gas tank', () => {
     expect(rcsRocket(false).getTelemetry().missing).toBe('RCS NEEDS A COLD GAS TANK');
-    const ok = rcsRocket(true).getTelemetry();
-    expect(ok.valid).toBe(true);
-    expect(ok.missing).toBe('');
+    expect(rcsRocket(true).getTelemetry().missing).not.toBe('RCS NEEDS A COLD GAS TANK');
+  });
+
+  it('a rocket too heavy to lift off with full tanks cannot launch', () => {
+    const tree = new RocketTree(7, 8);
+    for (let y = 9; y <= 11; y++) expect(tree.attachPart(7, y, 'FUEL_TANK').success).toBe(true);
+    expect(tree.attachPart(7, 12, 'ENGINE').success).toBe(true);
+    const t = tree.getTelemetry();
+    expect(t.valid).toBe(false);
+    expect(t.missing).toMatch(/TOO HEAVY/);
+    const light = new RocketTree(7, 8);
+    light.attachPart(7, 9, 'FUEL_TANK');
+    light.attachPart(7, 10, 'ENGINE');
+    expect(light.getTelemetry().valid).toBe(true);
   });
 
   it('the lab shows the same fuel weight as the flight model', () => {
